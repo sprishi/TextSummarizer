@@ -1,0 +1,34 @@
+{
+ "name": "AI Model",
+ "children": [
+	{
+	 "name": "Pass 1",
+	 "children": [
+	  {
+	   "name": "AllState",
+	   "children": [
+	      {"name": "No of documents - 5", "size": 1},
+	      {"name": "Extraction % (Avg) - 89%", "size": 1},
+	      {"name": "Extraction Accuracy % (Avg) - 100%", "size": 1}
+	   ]
+	  },
+	  {
+	   "name": "RAM",
+	   "children": [
+	      {"name": "No of documents - 5", "size": 1},
+	      {"name": "Extraction % (Avg) - 88%", "size": 1},
+	      {"name": "Extraction Accuracy % (Avg) - 100%", "size": 1}
+	   ]
+	  },
+	  {
+	   "name": "Germania",
+	   "children": [
+	      {"name": "No of documents - 5", "size": 1},
+	      {"name": "Extraction % (Avg) - 85%", "size": 1},
+	      {"name": "Extraction Accuracy % (Avg) - 75%", "size": 1}
+	   ]
+	  }
+	 ]
+	}
+]
+}
