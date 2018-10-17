@@ -1,0 +1,160 @@
+{
+ "name": "AI Model",
+ "children": [
+	{
+	 "name": "Pass 1",
+	 "children": [
+	  {
+	   "name": "AllState",
+	   "children": [
+	    {
+	     "name": "46395632.xlsx",
+	     "children": [
+	      {"name": "Fields Provided - 26", "size": 1},
+	      {"name": "Fields Available - 9", "size": 1},
+	      {"name": "Extraction % - 89%", "size": 1},
+	      {"name": "Extraction Acc % - 100%", "size": 1}
+	     ]
+	    },
+	    {
+	     "name": "45777939.xlsx",
+	     "children": [
+	      {"name": "No of Fields Provided - 26", "size": 1},
+	      {"name": "No of Fields Available - 9", "size": 1},
+	      {"name": "% of Extraction - 89%", "size": 1},
+	      {"name": "% Accuracy  of the extracted fields - 100%", "size": 1}
+	     ]
+	    },
+	    {
+	     "name": "45777938.xlsx",
+	     "children": [
+	      {"name": "No of Fields Provided - 26", "size": 1},
+	      {"name": "No of Fields Available - 9", "size": 1},
+	      {"name": "% of Extraction - 89%", "size": 1},
+	      {"name": "% Accuracy  of the extracted fields - 100%", "size": 1}
+	     ]
+	    },
+	    {
+	     "name": "45777937.xlsx",
+	     "children": [
+	      {"name": "No of Fields Provided - 26", "size": 1},
+	      {"name": "No of Fields Available - 9", "size": 1},
+	      {"name": "% of Extraction - 89%", "size": 1},
+	      {"name": "% Accuracy  of the extracted fields - 100%", "size": 1}
+	     ]
+	    },
+	    {
+	     "name": "45073037.xlsx",
+	     "children": [
+	      {"name": "No of Fields Provided - 26", "size": 1},
+	      {"name": "No of Fields Available - 9", "size": 1},
+	      {"name": "% of Extraction - 89%", "size": 1},
+	      {"name": "% Accuracy  of the extracted fields - 100%", "size": 1}
+	     ]
+	    }
+	   ]
+	  },
+	  {
+	   "name": "RAM",
+	   "children": [
+	    {
+	     "name": "47156771.pdf",
+	     "children": [
+	      {"name": "No of Fields Provided - 26", "size": 1},
+	      {"name": "No of Fields Available - 11", "size": 1},
+	      {"name": "% of Extraction - 91%", "size": 1},
+	      {"name": "% Accuracy  of the extracted fields - 100%", "size": 1}
+	     ]
+	    },
+	    {
+	     "name": "47242889.pdf",
+	     "children": [
+	      {"name": "No of Fields Provided - 26", "size": 1},
+	      {"name": "No of Fields Available - 10", "size": 1},
+	      {"name": "% of Extraction - 90%", "size": 1},
+	      {"name": "% Accuracy  of the extracted fields - 100%", "size": 1}
+	     ]
+	    },
+	    {
+	     "name": "47514881.pdf",
+	     "children": [
+	      {"name": "No of Fields Provided - 26", "size": 1},
+	      {"name": "No of Fields Available - 12", "size": 1},
+	      {"name": "% of Extraction - 83%", "size": 1},
+	      {"name": "% Accuracy  of the extracted fields - 100%", "size": 1}
+	     ]
+	    },
+	    {
+	     "name": "47514882.pdf",
+	     "children": [
+	      {"name": "No of Fields Provided - 26", "size": 1},
+	      {"name": "No of Fields Available - 12", "size": 1},
+	      {"name": "% of Extraction - 83%", "size": 1},
+	      {"name": "% Accuracy  of the extracted fields - 100%", "size": 1}
+	     ]
+	    },
+	    {
+	     "name": "47523308.pdf",
+	     "children": [
+	      {"name": "No of Fields Provided - 26", "size": 1},
+	      {"name": "No of Fields Available - 10", "size": 1},
+	      {"name": "% of Extraction - 90%", "size": 1},
+	      {"name": "% Accuracy  of the extracted fields - 100%", "size": 1}
+	     ]
+	    }
+	   ]
+	  },
+	  {
+	   "name": "Germania",
+	   "children": [
+	    {
+	     "name": "45063772.pdf",
+	     "children": [
+	      {"name": "No of Fields Provided - 26", "size": 1},
+	      {"name": "No of Fields Available - 9", "size": 1},
+	      {"name": "% of Extraction - 89%", "size": 1},
+	      {"name": "% Accuracy  of the extracted fields - 75%", "size": 1}
+	     ]
+	    },
+	    {
+	     "name": "45381409.pdf",
+	     "children": [
+	      {"name": "No of Fields Provided - 26", "size": 1},
+	      {"name": "No of Fields Available - 9", "size": 1},
+	      {"name": "% of Extraction - 89%", "size": 1},
+	      {"name": "% Accuracy  of the extracted fields - 75%", "size": 1}
+	     ]
+	    },
+	    {
+	     "name": "49570123.pdf",
+	     "children": [
+	      {"name": "No of Fields Provided - 26", "size": 1},
+	      {"name": "No of Fields Available - 9", "size": 1},
+	      {"name": "% of Extraction - 89%", "size": 1},
+	      {"name": "% Accuracy  of the extracted fields - 75%", "size": 1}
+	     ]
+	    },
+	    {
+	     "name": "50966313.pdf",
+	     "children": [
+	      {"name": "No of Fields Provided - 26", "size": 1},
+	      {"name": "No of Fields Available - 9", "size": 1},
+	      {"name": "% of Extraction - 89%", "size": 1},
+	      {"name": "% Accuracy  of the extracted fields - 75%", "size": 1}
+	     ]
+	    },
+	    {
+	     "name": "51285717.pdf",
+	     "children": [
+	      {"name": "No of Fields Provided - 26", "size": 1},
+	      {"name": "No of Fields Available - 7", "size": 1},
+	      {"name": "% of Extraction - 71%", "size": 1},
+	      {"name": "% Accuracy  of the extracted fields - 80%", "size": 1}
+	     ]
+	    }
+	   ]
+	  }
+	 ]
+	}	
+]
+}
