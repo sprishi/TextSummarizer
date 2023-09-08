@@ -1,0 +1,38 @@
+-- Step 1: Vessels currently inside the polygon
+SELECT 
+  currentInside.[vessel id], 
+  MIN(insideAfterOutside.[movement date and time]) AS EntryTime
+FROM 
+(
+  SELECT [vessel id], MAX([movement date and time]) AS LatestInsideTime
+  FROM YourTableName
+  WHERE YOUR_INSIDE_POLYGON_LOGIC_HERE
+  GROUP BY [vessel id]
+) AS currentInside
+
+-- Step 2: Find the most recent time before LatestInsideTime where the vessel was outside the polygon
+LEFT JOIN 
+(
+  SELECT
+    currentInsideSub.[vessel id],
+    MAX(yt.[movement date and time]) AS LastOutsideTime
+  FROM 
+  (
+    SELECT [vessel id], MAX([movement date and time]) AS LatestInsideTime
+    FROM YourTableName
+    WHERE YOUR_INSIDE_POLYGON_LOGIC_HERE
+    GROUP BY [vessel id]
+  ) AS currentInsideSub
+  JOIN YourTableName yt ON currentInsideSub.[vessel id] = yt.[vessel id]
+  WHERE yt.[movement date and time] < currentInsideSub.LatestInsideTime
+  AND NOT YOUR_INSIDE_POLYGON_LOGIC_HERE
+  GROUP BY currentInsideSub.[vessel id]
+) AS lastTimeOutside ON currentInside.[vessel id] = lastTimeOutside.[vessel id]
+
+-- Step 3: Find the entry point into the polygon after LastOutsideTime
+JOIN YourTableName AS insideAfterOutside ON currentInside.[vessel id] = insideAfterOutside.[vessel id]
+AND (lastTimeOutside.LastOutsideTime IS NULL OR insideAfterOutside.[movement date and time] > lastTimeOutside.LastOutsideTime) 
+AND YOUR_INSIDE_POLYGON_LOGIC_HERE
+
+GROUP BY currentInside.[vessel id]
+ORDER BY currentInside.[vessel id];
