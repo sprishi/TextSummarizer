@@ -1,38 +1,45 @@
--- Step 1: Vessels currently inside the polygon
-SELECT 
-  currentInside.[vessel id], 
-  MIN(insideAfterOutside.[movement date and time]) AS EntryTime
-FROM 
-(
-  SELECT [vessel id], MAX([movement date and time]) AS LatestInsideTime
-  FROM YourTableName
-  WHERE YOUR_INSIDE_POLYGON_LOGIC_HERE
-  GROUP BY [vessel id]
-) AS currentInside
+import pandas as pd
+from openpyxl import Workbook
+from openpyxl.utils.dataframe import dataframe_to_rows
+from openpyxl.worksheet.table import Table, TableStyleInfo
+from openpyxl.pivot import PivotTable
 
--- Step 2: Find the most recent time before LatestInsideTime where the vessel was outside the polygon
-LEFT JOIN 
-(
-  SELECT
-    currentInsideSub.[vessel id],
-    MAX(yt.[movement date and time]) AS LastOutsideTime
-  FROM 
-  (
-    SELECT [vessel id], MAX([movement date and time]) AS LatestInsideTime
-    FROM YourTableName
-    WHERE YOUR_INSIDE_POLYGON_LOGIC_HERE
-    GROUP BY [vessel id]
-  ) AS currentInsideSub
-  JOIN YourTableName yt ON currentInsideSub.[vessel id] = yt.[vessel id]
-  WHERE yt.[movement date and time] < currentInsideSub.LatestInsideTime
-  AND NOT YOUR_INSIDE_POLYGON_LOGIC_HERE
-  GROUP BY currentInsideSub.[vessel id]
-) AS lastTimeOutside ON currentInside.[vessel id] = lastTimeOutside.[vessel id]
+# Sample dataframe
+df = pd.DataFrame({
+    'Date': pd.date_range('2023-01-01', periods=10),
+    'Product': ['A', 'B', 'C', 'A', 'B', 'A', 'C', 'C', 'B', 'A'],
+    'Sales': [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
+})
 
--- Step 3: Find the entry point into the polygon after LastOutsideTime
-JOIN YourTableName AS insideAfterOutside ON currentInside.[vessel id] = insideAfterOutside.[vessel id]
-AND (lastTimeOutside.LastOutsideTime IS NULL OR insideAfterOutside.[movement date and time] > lastTimeOutside.LastOutsideTime) 
-AND YOUR_INSIDE_POLYGON_LOGIC_HERE
+# Create a new workbook and add the dataframe to the first sheet
+wb = Workbook()
+ws_data = wb.active
+ws_data.title = "Data"
 
-GROUP BY currentInside.[vessel id]
-ORDER BY currentInside.[vessel id];
+for r_idx, row in enumerate(dataframe_to_rows(df, index=False, header=True), 1):
+    for c_idx, value in enumerate(row, 1):
+        ws_data.cell(row=r_idx, column=c_idx, value=value)
+
+# Create a table for the data
+tab = Table(displayName="Table1", ref=ws_data.dimensions)
+style = TableStyleInfo(name="TableStyleMedium9", showFirstColumn=False,
+                       showLastColumn=False, showRowStripes=True, showColumnStripes=True)
+tab.tableStyleInfo = style
+ws_data.add_table(tab)
+
+# Create a new worksheet for the pivot table
+ws_pivot = wb.create_sheet(title="PivotTable")
+
+# Create the pivot table
+pivot = PivotTable(name="PivotTable", table=tab)
+pivot.add_field("Date", is_row_field=True)
+pivot.add_field("Product", is_row_field=True)
+pivot.add_data_field("Date", "Count of Date", "count")
+pivot.add_data_field("Sales", "Sum of Sales", "sum")
+pivot.add_filter("Date")
+pivot.add_filter("Product")
+
+ws_pivot.add_pivot(pivot, "E5")
+
+# Save the workbook
+wb.save("sales_data.xlsx")
