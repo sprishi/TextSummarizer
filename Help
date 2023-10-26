@@ -1,19 +1,39 @@
-# Predict class probabilities
-load_probs = model_load.predict_proba(X_test)
-discharge_probs = model_discharge.predict(X_test)
+# Step 1: Prepare the Input Data
+# Assuming the list of flight numbers is called flight_numbers
+input_data = pd.DataFrame({'no': flight_numbers})
 
-# Extract the top 3 predictions for load country
+# If other features are needed, you'll have to add or impute them here
+
+# Step 2: Predict Probabilities
+load_probs = model_load.predict_proba(input_data)
+discharge_probs = model_discharge.predict_proba(input_data)
+
+# Step 3: Extract Top 3 Predictions and Probabilities
 top3_load_indices = load_probs.argsort(axis=1)[:, -3:]
-top3_load_probs = np.sort(load_probs, axis=1)[:, -3:]
+top3_load_probs = np.sort(load_probs, axis=1)[:, -3:] * 100  # Convert to percentage
 
-# Extract the top 3 predictions for discharge country
 top3_discharge_indices = discharge_probs.argsort(axis=1)[:, -3:]
-top3_discharge_probs = np.sort(discharge_probs, axis=1)[:, -3:]
+top3_discharge_probs = np.sort(discharge_probs, axis=1)[:, -3:] * 100  # Convert to percentage
 
-# Convert indices to class labels
-top3_load_labels = le_load.inverse_transform(top3_load_indices)
-top3_discharge_labels = le_discharge.inverse_transform(top3_discharge_indices)
+top3_load_labels = np.array([le_load.inverse_transform(row) for row in top3_load_indices])
+top3_discharge_labels = np.array([le_discharge.inverse_transform(row) for row in top3_discharge_indices])
 
-# Combine labels and probabilities for a comprehensive view
-top3_load_predictions = [(labels, probs) for labels, probs in zip(top3_load_labels, top3_load_probs)]
-top3_discharge_predictions = [(labels, probs) for labels, probs in zip(top3_discharge_labels, top3_discharge_probs)]
+# Step 4: Format and Display Results
+results = pd.DataFrame({
+    'Flight No': flight_numbers,
+    'Load Prediction 1': top3_load_labels[:, 2],
+    'Load Prob 1 (%)': np.round(top3_load_probs[:, 2], 2),
+    'Load Prediction 2': top3_load_labels[:, 1],
+    'Load Prob 2 (%)': np.round(top3_load_probs[:, 1], 2),
+    'Load Prediction 3': top3_load_labels[:, 0],
+    'Load Prob 3 (%)': np.round(top3_load_probs[:, 0], 2),
+    'Discharge Prediction 1': top3_discharge_labels[:, 2],
+    'Discharge Prob 1 (%)': np.round(top3_discharge_probs[:, 2], 2),
+    'Discharge Prediction 2': top3_discharge_labels[:, 1],
+    'Discharge Prob 2 (%)': np.round(top3_discharge_probs[:, 1], 2),
+    'Discharge Prediction 3': top3_discharge_labels[:, 0],
+    'Discharge Prob 3 (%)': np.round(top3_discharge_probs[:, 0], 2),
+})
+
+# Display the results
+print(results)
