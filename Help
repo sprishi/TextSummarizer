@@ -1,45 +1,53 @@
-import pandas as pd
-from openpyxl import Workbook
-from openpyxl.utils.dataframe import dataframe_to_rows
-from openpyxl.worksheet.table import Table, TableStyleInfo
-from openpyxl.pivot import PivotTable
+# Features
+X_train = train_df.drop(columns=['loadcountry', 'dischargecountry'])
+X_test = test_df.drop(columns=['loadcountry', 'dischargecountry'])
 
-# Sample dataframe
-df = pd.DataFrame({
-    'Date': pd.date_range('2023-01-01', periods=10),
-    'Product': ['A', 'B', 'C', 'A', 'B', 'A', 'C', 'C', 'B', 'A'],
-    'Sales': [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
-})
+# Targets
+y_train_load = train_df['loadcountry']
+y_test_load = test_df['loadcountry']
 
-# Create a new workbook and add the dataframe to the first sheet
-wb = Workbook()
-ws_data = wb.active
-ws_data.title = "Data"
+y_train_discharge = train_df['dischargecountry']
+y_test_discharge = test_df['dischargecountry']
 
-for r_idx, row in enumerate(dataframe_to_rows(df, index=False, header=True), 1):
-    for c_idx, value in enumerate(row, 1):
-        ws_data.cell(row=r_idx, column=c_idx, value=value)
 
-# Create a table for the data
-tab = Table(displayName="Table1", ref=ws_data.dimensions)
-style = TableStyleInfo(name="TableStyleMedium9", showFirstColumn=False,
-                       showLastColumn=False, showRowStripes=True, showColumnStripes=True)
-tab.tableStyleInfo = style
-ws_data.add_table(tab)
+from sklearn.preprocessing import LabelEncoder
 
-# Create a new worksheet for the pivot table
-ws_pivot = wb.create_sheet(title="PivotTable")
+# For load country
+le_load = LabelEncoder()
+y_train_load_encoded = le_load.fit_transform(y_train_load)
+y_test_load_encoded = le_load.transform(y_test_load)
 
-# Create the pivot table
-pivot = PivotTable(name="PivotTable", table=tab)
-pivot.add_field("Date", is_row_field=True)
-pivot.add_field("Product", is_row_field=True)
-pivot.add_data_field("Date", "Count of Date", "count")
-pivot.add_data_field("Sales", "Sum of Sales", "sum")
-pivot.add_filter("Date")
-pivot.add_filter("Product")
+# For discharge country
+le_discharge = LabelEncoder()
+y_train_discharge_encoded = le_discharge.fit_transform(y_train_discharge)
+y_test_discharge_encoded = le_discharge.transform(y_test_discharge)
 
-ws_pivot.add_pivot(pivot, "E5")
 
-# Save the workbook
-wb.save("sales_data.xlsx")
+
+import xgboost as xgb
+
+# For load country
+model_load = xgb.XGBClassifier(objective='multi:softmax', num_class=len(le_load.classes_))
+model_load.fit(X_train, y_train_load_encoded)
+
+# For discharge country
+model_discharge = xgb.XGBClassifier(objective='multi:softmax', num_class=len(le_discharge.classes_))
+model_discharge.fit(X_train, y_train_discharge_encoded)
+
+
+from sklearn.metrics import accuracy_score, classification_report
+
+# Predictions
+y_pred_load = model_load.predict(X_test)
+y_pred_discharge = model_discharge.predict(X_test)
+
+# Convert predictions back to original labels
+y_pred_load_labels = le_load.inverse_transform(y_pred_load)
+y_pred_discharge_labels = le_discharge.inverse_transform(y_pred_discharge)
+
+# Evaluate
+print("Load Country Classification Report:")
+print(classification_report(y_test_load, y_pred_load_labels))
+
+print("\nDischarge Country Classification Report:")
+print(classification_report(y_test_discharge, y_pred_discharge_labels))
