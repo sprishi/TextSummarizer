@@ -1,72 +1,19 @@
-# Features
-X_train = train_df.drop(columns=['loadcountry', 'dischargecountry'])
-X_test = test_df.drop(columns=['loadcountry', 'dischargecountry'])
+# Predict class probabilities
+load_probs = model_load.predict_proba(X_test)
+discharge_probs = model_discharge.predict(X_test)
 
-# Targets
-y_train_load = train_df['loadcountry']
-y_test_load = test_df['loadcountry']
+# Extract the top 3 predictions for load country
+top3_load_indices = load_probs.argsort(axis=1)[:, -3:]
+top3_load_probs = np.sort(load_probs, axis=1)[:, -3:]
 
-y_train_discharge = train_df['dischargecountry']
-y_test_discharge = test_df['dischargecountry']
+# Extract the top 3 predictions for discharge country
+top3_discharge_indices = discharge_probs.argsort(axis=1)[:, -3:]
+top3_discharge_probs = np.sort(discharge_probs, axis=1)[:, -3:]
 
+# Convert indices to class labels
+top3_load_labels = le_load.inverse_transform(top3_load_indices)
+top3_discharge_labels = le_discharge.inverse_transform(top3_discharge_indices)
 
-from sklearn.preprocessing import LabelEncoder
-
-# For load country
-all_load_countries = pd.concat([y_train_load, y_test_load]).unique()
-le_load = LabelEncoder().fit(all_load_countries)
-y_train_load_encoded = le_load.transform(y_train_load)
-y_test_load_encoded = le_load.transform(y_test_load)
-
-# For discharge country
-all_discharge_countries = pd.concat([y_train_discharge, y_test_discharge]).unique()
-le_discharge = LabelEncoder().fit(all_discharge_countries)
-y_train_discharge_encoded = le_discharge.transform(y_train_discharge)
-y_test_discharge_encoded = le_discharge.transform(y_test_discharge)
-
-
-
-
-import xgboost as xgb
-
-# For load country
-model_load = xgb.XGBClassifier(objective='multi:softmax', num_class=len(le_load.classes_))
-model_load.fit(X_train, y_train_load_encoded)
-
-# For discharge country
-model_discharge = xgb.XGBClassifier(objective='multi:softmax', num_class=len(le_discharge.classes_))
-model_discharge.fit(X_train, y_train_discharge_encoded)
-
-
-from sklearn.metrics import accuracy_score, classification_report
-
-from sklearn.metrics import accuracy_score, classification_report
-
-# Predictions
-y_pred_load = model_load.predict(X_test)
-y_pred_discharge = model_discharge.predict(X_test)
-
-# Convert predictions back to original labels
-y_pred_load_labels = le_load.inverse_transform(y_pred_load)
-y_pred_discharge_labels = le_discharge.inverse_transform(y_pred_discharge)
-
-# Convert both true labels and predictions to string for consistency
-y_test_load_str = y_test_load.astype(str)
-y_pred_load_labels_str = pd.Series(y_pred_load_labels).astype(str)
-
-y_test_discharge_str = y_test_discharge.astype(str)
-y_pred_discharge_labels_str = pd.Series(y_pred_discharge_labels).astype(str)
-
-# Classification Reports
-print("Load Country Classification Report:")
-print(classification_report(y_test_load_str, y_pred_load_labels_str))
-
-print("\nDischarge Country Classification Report:")
-print(classification_report(y_test_discharge_str, y_pred_discharge_labels_str))
-
-# Overall Accuracies
-load_accuracy = accuracy_score(y_test_load_str, y_pred_load_labels_str)
-discharge_accuracy = accuracy_score(y_test_discharge_str, y_pred_discharge_labels_str)
-
-print(f"\nOverall Accuracy for Load Country: {load_accuracy:.2f}")
-print(f"Overall Accuracy for Discharge Country: {discharge_accuracy:.2f}")
+# Combine labels and probabilities for a comprehensive view
+top3_load_predictions = [(labels, probs) for labels, probs in zip(top3_load_labels, top3_load_probs)]
+top3_discharge_predictions = [(labels, probs) for labels, probs in zip(top3_discharge_labels, top3_discharge_probs)]
