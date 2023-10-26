@@ -13,14 +13,17 @@ y_test_discharge = test_df['dischargecountry']
 from sklearn.preprocessing import LabelEncoder
 
 # For load country
-le_load = LabelEncoder()
-y_train_load_encoded = le_load.fit_transform(y_train_load)
+all_load_countries = pd.concat([y_train_load, y_test_load]).unique()
+le_load = LabelEncoder().fit(all_load_countries)
+y_train_load_encoded = le_load.transform(y_train_load)
 y_test_load_encoded = le_load.transform(y_test_load)
 
 # For discharge country
-le_discharge = LabelEncoder()
-y_train_discharge_encoded = le_discharge.fit_transform(y_train_discharge)
+all_discharge_countries = pd.concat([y_train_discharge, y_test_discharge]).unique()
+le_discharge = LabelEncoder().fit(all_discharge_countries)
+y_train_discharge_encoded = le_discharge.transform(y_train_discharge)
 y_test_discharge_encoded = le_discharge.transform(y_test_discharge)
+
 
 
 
