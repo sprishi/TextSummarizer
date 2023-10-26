@@ -1,0 +1,95 @@
+import lightgbm as lgb
+from sklearn.metrics import accuracy_score, classification_report
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder
+
+# 1. Data Preparation
+
+# Splitting the data
+train = df[df['type'] == 'completed']
+test = df[df['type'] != 'completed']
+
+X_train = train.drop(columns=['loadcountry', 'dischargecountry'])
+y_train_load = train['loadcountry']
+y_train_discharge = train['dischargecountry']
+
+X_test = test.drop(columns=['loadcountry', 'dischargecountry'])
+y_test_load = test['loadcountry']
+y_test_discharge = test['dischargecountry']
+
+# Encoding target variables
+le_load = LabelEncoder()
+y_train_load_encoded = le_load.fit_transform(y_train_load)
+
+le_discharge = LabelEncoder()
+y_train_discharge_encoded = le_discharge.fit_transform(y_train_discharge)
+
+# 2. Model Training
+
+# Train model for loadcountry
+d_train_load = lgb.Dataset(X_train, label=y_train_load_encoded)
+params_load = {}
+model_load = lgb.train(params_load, d_train_load)
+
+# Train model for dischargecountry
+d_train_discharge = lgb.Dataset(X_train, label=y_train_discharge_encoded)
+params_discharge = {}
+model_discharge = lgb.train(params_discharge, d_train_discharge)
+
+# 3. Model Evaluation
+
+# Predictions
+y_pred_load_encoded = model_load.predict(X_test, num_iteration=model_load.best_iteration)
+y_pred_load_labels = le_load.inverse_transform(y_pred_load_encoded.argmax(axis=1))
+
+y_pred_discharge_encoded = model_discharge.predict(X_test, num_iteration=model_discharge.best_iteration)
+y_pred_discharge_labels = le_discharge.inverse_transform(y_pred_discharge_encoded.argmax(axis=1))
+
+# Evaluate accuracy
+accuracy_load = accuracy_score(y_test_load, y_pred_load_labels)
+accuracy_discharge = accuracy_score(y_test_discharge, y_pred_discharge_labels)
+
+print(f"Load Country Accuracy: {accuracy_load}")
+print(f"Discharge Country Accuracy: {accuracy_discharge}")
+
+# Classification report
+print("Load Country Classification Report:")
+print(classification_report(y_test_load, y_pred_load_labels))
+
+print("\nDischarge Country Classification Report:")
+print(classification_report(y_test_discharge, y_pred_discharge_labels))
+
+# 4. Predictions & Displaying Results
+
+# Predict class probabilities
+load_probs = model_load.predict(X_test, num_iteration=model_load.best_iteration)
+discharge_probs = model_discharge.predict(X_test, num_iteration=model_discharge.best_iteration)
+
+# Extract the top 3 predictions for load country
+top3_load_indices = load_probs.argsort(axis=1)[:, -3:]
+top3_load_probs = np.sort(load_probs, axis=1)[:, -3:] * 100  # Convert to percentage
+top3_load_labels = np.array([le_load.inverse_transform(row) for row in top3_load_indices])
+
+# Extract the top 3 predictions for discharge country
+top3_discharge_indices = discharge_probs.argsort(axis=1)[:, -3:]
+top3_discharge_probs = np.sort(discharge_probs, axis=1)[:, -3:] * 100  # Convert to percentage
+top3_discharge_labels = np.array([le_discharge.inverse_transform(row) for row in top3_discharge_indices])
+
+# Format results
+results = pd.DataFrame({
+    'Flight No': X_test['no'].values,
+    'Load Prediction 1': top3_load_labels[:, 2],
+    'Load Prob 1 (%)': np.round(top3_load_probs[:, 2], 2),
+    'Load Prediction 2': top3_load_labels[:, 1],
+    'Load Prob 2 (%)': np.round(top3_load_probs[:, 1], 2),
+    'Load Prediction 3': top3_load_labels[:, 0],
+    'Load Prob 3 (%)': np.round(top3_load_probs[:, 0], 2),
+    'Discharge Prediction 1': top3_discharge_labels[:, 2],
+    'Discharge Prob 1 (%)': np.round(top3_discharge_probs[:, 2], 2),
+    'Discharge Prediction 2': top3_discharge_labels[:, 1],
+    'Discharge Prob 2 (%)': np.round(top3_discharge_probs[:, 1], 2),
+    'Discharge Prediction 3': top3_discharge_labels[:, 0],
+    'Discharge Prob 3 (%)': np.round(top3_discharge_probs[:, 0], 2),
+})
+
+print(results)
