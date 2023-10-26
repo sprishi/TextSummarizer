@@ -54,3 +54,22 @@ print(classification_report(y_test_load, y_pred_load_labels))
 
 print("\nDischarge Country Classification Report:")
 print(classification_report(y_test_discharge, y_pred_discharge_labels))
+
+
+
+
+
+
+
+
+# Check if there are any NaN values in the predictions or the true labels
+print("NaN in y_test_load:", y_test_load.isnull().sum())
+print("NaN in y_pred_load_labels:", pd.Series(y_pred_load_labels).isnull().sum())
+
+# Convert both to string type to ensure consistent data types
+y_test_load_str = y_test_load.astype(str)
+y_pred_load_labels_str = pd.Series(y_pred_load_labels).astype(str)
+
+# Now, try the classification report again
+print("Load Country Classification Report:")
+print(classification_report(y_test_load_str, y_pred_load_labels_str))
