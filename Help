@@ -40,6 +40,8 @@ model_discharge.fit(X_train, y_train_discharge_encoded)
 
 from sklearn.metrics import accuracy_score, classification_report
 
+from sklearn.metrics import accuracy_score, classification_report
+
 # Predictions
 y_pred_load = model_load.predict(X_test)
 y_pred_discharge = model_discharge.predict(X_test)
@@ -48,28 +50,23 @@ y_pred_discharge = model_discharge.predict(X_test)
 y_pred_load_labels = le_load.inverse_transform(y_pred_load)
 y_pred_discharge_labels = le_discharge.inverse_transform(y_pred_discharge)
 
-# Evaluate
-print("Load Country Classification Report:")
-print(classification_report(y_test_load, y_pred_load_labels))
-
-print("\nDischarge Country Classification Report:")
-print(classification_report(y_test_discharge, y_pred_discharge_labels))
-
-
-
-
-
-
-
-
-# Check if there are any NaN values in the predictions or the true labels
-print("NaN in y_test_load:", y_test_load.isnull().sum())
-print("NaN in y_pred_load_labels:", pd.Series(y_pred_load_labels).isnull().sum())
-
-# Convert both to string type to ensure consistent data types
+# Convert both true labels and predictions to string for consistency
 y_test_load_str = y_test_load.astype(str)
 y_pred_load_labels_str = pd.Series(y_pred_load_labels).astype(str)
 
-# Now, try the classification report again
+y_test_discharge_str = y_test_discharge.astype(str)
+y_pred_discharge_labels_str = pd.Series(y_pred_discharge_labels).astype(str)
+
+# Classification Reports
 print("Load Country Classification Report:")
 print(classification_report(y_test_load_str, y_pred_load_labels_str))
+
+print("\nDischarge Country Classification Report:")
+print(classification_report(y_test_discharge_str, y_pred_discharge_labels_str))
+
+# Overall Accuracies
+load_accuracy = accuracy_score(y_test_load_str, y_pred_load_labels_str)
+discharge_accuracy = accuracy_score(y_test_discharge_str, y_pred_discharge_labels_str)
+
+print(f"\nOverall Accuracy for Load Country: {load_accuracy:.2f}")
+print(f"Overall Accuracy for Discharge Country: {discharge_accuracy:.2f}")
