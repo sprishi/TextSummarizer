@@ -1,3 +1,41 @@
+from sklearn.ensemble import GradientBoostingClassifier
+from sklearn.preprocessing import LabelEncoder
+from sklearn.metrics import accuracy_score, f1_score
+
+# Step 1: Predict loadcountry on your training data
+predicted_load_train = model_load.predict(X_train)
+
+# Step 2: Add this prediction as a new feature to your training data
+X_train_augmented = X_train.copy()
+X_train_augmented['predicted_loadcountry'] = le_load.transform(predicted_load_train)
+
+# Step 3: Train the dischargecountry model using the augmented training data
+model_discharge_augmented = GradientBoostingClassifier(n_estimators=100, random_state=42)
+model_discharge_augmented.fit(X_train_augmented, y_train_discharge)
+
+# For evaluation on the test set:
+# First, predict the loadcountry on the test data
+predicted_load_test = model_load.predict(X_test)
+
+# Add this prediction as a new feature to your test data
+X_test_augmented = X_test.copy()
+X_test_augmented['predicted_loadcountry'] = le_load.transform(predicted_load_test)
+
+# Predict the dischargecountry using the augmented test data
+predicted_discharge_test = model_discharge_augmented.predict(X_test_augmented)
+
+# Evaluate the performance
+discharge_accuracy = accuracy_score(y_test_discharge, predicted_discharge_test)
+discharge_f1 = f1_score(y_test_discharge, predicted_discharge_test, average='weighted')
+
+print(f"Discharge Country Accuracy (with chaining): {discharge_accuracy:.2f}")
+print(f"Discharge Country F1 Score (with chaining): {discharge_f1:.2f}")
+
+
+
+--------------
+
+
 import lightgbm as lgb
 from sklearn.metrics import accuracy_score, classification_report
 from sklearn.model_selection import train_test_split
