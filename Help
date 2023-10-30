@@ -1,56 +1,126 @@
-from keras.utils import to_categorical
+import xgboost as xgb
+from sklearn.model_selection import train_test_split, RandomizedSearchCV
+from sklearn.metrics import accuracy_score, f1_score, classification_report
+from sklearn.preprocessing import LabelEncoder
+import numpy as np
 
-# Encoding target variables for Neural Network
-le_load = LabelEncoder()
-y_train_load_encoded = le_load.fit_transform(y_train_load)
-y_train_load_onehot = to_categorical(y_train_load_encoded)
+# Assuming df is your dataset
 
-le_discharge = LabelEncoder()
-y_train_discharge_encoded = le_discharge.fit_transform(y_train_discharge)
-y_train_discharge_onehot = to_categorical(y_train_discharge_encoded)
+# Selecting features for the model
+features = [
+    'no', 'dep_month', 'arr_month', 'prev_load_ctr', 'prev_disc_ctr', 
+    'prev_load_ctr1', 'prev_disc_ctr1', 'prev_load_ctr2', 'prev_disc_ctr2',
+    'mean_voyage_wk_routes', 'route_class_count', 'unique_routes',
+    'datagroup_1', 'datagroup_2', 'vclass'
+]
+
+X = df[features]
+y = df['loadcountry']
+
+# Train-Test Split
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# Setting up the parameter grid for RandomizedSearchCV
+param_grid = {
+    'n_estimators': np.arange(100, 1000, 50),
+    'learning_rate': [0.001, 0.01, 0.05, 0.1],
+    'max_depth': np.arange(3, 10),
+    'subsample': np.arange(0.5, 1.1, 0.1),
+    'colsample_bytree': np.arange(0.5, 1.1, 0.1),
+    'gamma': np.arange(0, 2, 0.1)
+}
+
+# Initiating the XGBoost classifier
+model = xgb.XGBClassifier(objective='multi:softmax', random_state=42)
+
+# Setting up RandomizedSearchCV
+search = RandomizedSearchCV(model, param_distributions=param_grid, n_iter=100, scoring='accuracy', cv=3, verbose=1, n_jobs=-1, random_state=42)
+search.fit(X_train, y_train)
+
+# Getting the best model
+best_model = search.best_estimator_
+
+# Predict on test set
+y_pred = best_model.predict(X_test)
+
+# Evaluate the model's performance
+accuracy = accuracy_score(y_test, y_pred)
+f1 = f1_score(y_test, y_pred, average='weighted')
+
+print(f"Load Country Accuracy: {accuracy:.2f}")
+print(f"Load Country F1 Score: {f1:.2f}")
+print("\nClassification Report for Load Country:")
+print(classification_report(y_test, y_pred))
+
+print("\nBest Parameters:")
+print(search.best_params_)
 
 
 
-from keras.models import Sequential
-from keras.layers import LSTM, Dense
-
-# Define LSTM architecture for loadcountry
-model_load = Sequential()
-model_load.add(LSTM(50, input_shape=(X_train.shape[1], 1))) # 50 LSTM units
-model_load.add(Dense(y_train_load_onehot.shape[1], activation='softmax'))
-model_load.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
-
-# Define LSTM architecture for dischargecountry
-model_discharge = Sequential()
-model_discharge.add(LSTM(50, input_shape=(X_train.shape[1], 1))) # 50 LSTM units
-model_discharge.add(Dense(y_train_discharge_onehot.shape[1], activation='softmax'))
-model_discharge.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
+-------------------------
 
 
 
+import lightgbm as lgb
+from sklearn.model_selection import train_test_split, RandomizedSearchCV
+from sklearn.metrics import accuracy_score, f1_score, classification_report
+import numpy as np
 
-# Reshape input data for LSTM [samples, timesteps, features]
-X_train_reshaped = X_train.values.reshape((X_train.shape[0], X_train.shape[1], 1))
+# Assuming df is your dataset
 
-# Train model for loadcountry
-model_load.fit(X_train_reshaped, y_train_load_onehot, epochs=10, batch_size=32)
+# Selecting features for the model
+features = [
+    'no', 'dep_month', 'arr_month', 'prev_load_ctr', 'prev_disc_ctr', 
+    'prev_load_ctr1', 'prev_disc_ctr1', 'prev_load_ctr2', 'prev_disc_ctr2',
+    'mean_voyage_wk_routes', 'route_class_count', 'unique_routes',
+    'datagroup_1', 'datagroup_2', 'vclass'
+]
 
-# Train model for dischargecountry
-model_discharge.fit(X_train_reshaped, y_train_discharge_onehot, epochs=10, batch_size=32)
+X = df[features]
+y = df['loadcountry']
+
+# Train-Test Split
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# Setting up the parameter grid for RandomizedSearchCV
+param_grid = {
+    'n_estimators': np.arange(100, 1000, 50),
+    'learning_rate': [0.001, 0.01, 0.05, 0.1],
+    'max_depth': np.arange(3, 10),
+    'subsample': np.arange(0.5, 1.1, 0.1),
+    'colsample_bytree': np.arange(0.5, 1.1, 0.1),
+    'num_leaves': np.arange(20, 150, 10),
+    'min_child_samples': np.arange(5, 100, 5),
+    'min_child_weight': [1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 1, 1e1, 1e2, 1e3, 1e4]
+}
+
+# Initiating the LightGBM classifier
+model = lgb.LGBMClassifier(objective='multiclass', random_state=42)
+
+# Setting up RandomizedSearchCV
+search = RandomizedSearchCV(model, param_distributions=param_grid, n_iter=100, scoring='accuracy', cv=3, verbose=1, n_jobs=-1, random_state=42)
+search.fit(X_train, y_train)
+
+# Getting the best model
+best_model = search.best_estimator_
+
+# Predict on test set
+y_pred = best_model.predict(X_test)
+
+# Evaluate the model's performance
+accuracy = accuracy_score(y_test, y_pred)
+f1 = f1_score(y_test, y_pred, average='weighted')
+
+print(f"Load Country Accuracy: {accuracy:.2f}")
+print(f"Load Country F1 Score: {f1:.2f}")
+print("\nClassification Report for Load Country:")
+print(classification_report(y_test, y_pred))
+
+print("\nBest Parameters:")
+print(search.best_params_)
+
+
+----------------------
 
 
 
-
-
-# Reshape test data
-X_test_reshaped = X_test.values.reshape((X_test.shape[0], X_test.shape[1], 1))
-
-# Predictions
-y_pred_load_probs = model_load.predict(X_test_reshaped)
-y_pred_discharge_probs = model_discharge.predict(X_test_reshaped)
-
-# Get class labels
-y_pred_load = le_load.inverse_transform(y_pred_load_probs.argmax(axis=1))
-y_pred_discharge = le_discharge.inverse_transform(y_pred_discharge_probs.argmax(axis=1))
-
-# ... Remaining steps for evaluation and extracting top 3 predictions remain similar ...
