@@ -1,38 +1,43 @@
-import numpy as np
 import pandas as pd
-from sklearn.metrics import accuracy_score, f1_score
+import numpy as np
 
-# ... [same code as before up to model training]
+# Assuming your dataframe is named `df` and the set of features is `features`
 
-# Get probabilities of each class for each sample
-probabilities = model.predict_proba(X_test)
+# 1. Add Identifier Column
+df['identifier'] = 'old'
 
-# Get top 3 predictions' indices
-top3_indices = np.argsort(-probabilities, axis=1)[:, :3]
+# 2. Add New Rows
+unique_flights = df['no'].unique()
+new_rows = []
+for flight in unique_flights:
+    last_row = df[df['no'] == flight].iloc[-1].copy()
+    last_row['identifier'] = 'new'
+    new_rows.append(last_row)
 
-# Get top 3 predictions' labels
-top3_labels = label_encoder.inverse_transform(top3_indices)
+# Convert the list of new rows to a DataFrame and concatenate with the original df
+new_df = pd.DataFrame(new_rows)
+df = pd.concat([df, new_df], ignore_index=True)
 
-# Get top 3 predictions' probabilities
-top3_probs = np.array([probabilities[i, top3_indices[i]] for i in range(probabilities.shape[0])]) * 100  # Convert to percentages
+# 3. Populate the New Rows
+# Dep_month: Current month
+current_month = pd.Timestamp.now().month
+df.loc[df['identifier'] == 'new', 'Dep_month'] = current_month
 
-# Evaluate the model based on the top prediction
-y_pred_top = top3_indices[:, 0]
-accuracy = accuracy_score(y_test, y_pred_top)
-f1 = f1_score(y_test, y_pred_top, average='weighted')
+# Four columns with mean values
+cols_to_mean = ['Voyage_days', 'mean_voyagewk_routes', 'route_class_count', 'Arr_month']
+for col in cols_to_mean:
+    means = df.groupby('no')[col].transform('mean')
+    df.loc[df['identifier'] == 'new', col] = means[df['identifier'] == 'new']
 
-print(f"Overall Accuracy: {accuracy:.2f}")
-print(f"Overall F1 Score: {f1:.2f}\n")
+# Lag values for load_country and discharge_country
+for lag in range(1, 4):
+    df[f'prev_load_ctr{lag}'] = df.groupby('no')['load_country'].shift(lag)
+    df[f'prev_disc_ctr{lag}'] = df.groupby('no')['discharge_country'].shift(lag)
 
-# Combine results into a DataFrame
-df_results = pd.DataFrame({
-    'Flight_No': X_test['no'].values,
-    '1st_Predicted_Load_Country': top3_labels[:, 0],
-    '1st_Prediction_Probability_%': top3_probs[:, 0],
-    '2nd_Predicted_Load_Country': top3_labels[:, 1],
-    '2nd_Prediction_Probability_%': top3_probs[:, 1],
-    '3rd_Predicted_Load_Country': top3_labels[:, 2],
-    '3rd_Prediction_Probability_%': top3_probs[:, 2]
-})
+# Keep Unique_routes and datagroup_1, datagroup_2 unchanged
+# (This step is not needed as they are already copied over in the new rows)
 
-print(df_results.head())
+# Return the final DataFrame with features only
+final_df = df[features]
+
+final_df
