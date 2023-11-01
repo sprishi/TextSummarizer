@@ -1,43 +1,22 @@
-import pandas as pd
-import numpy as np
 
-# Assuming your dataframe is named `df` and the set of features is `features`
+# Sort the dataframe by 'no' and departure date
+df = df.sort_values(by=['no', 'departuredate'])
 
-# 1. Add Identifier Column
-df['identifier'] = 'old'
+# Function to update the top countries for each row
+def update_top_countries(flight_df):
+    load_countries = flight_df['load_country'].tolist()
+    top_countries = []
+    
+    for idx, country in enumerate(load_countries):
+        top_countries.append(country)
+        for i in range(5):
+            if idx >= i:
+                flight_df.at[flight_df.index[idx], f'top_country_{i+1}'] = top_countries[-(i+1)]
+                
+    return flight_df
 
-# 2. Add New Rows
-unique_flights = df['no'].unique()
-new_rows = []
-for flight in unique_flights:
-    last_row = df[df['no'] == flight].iloc[-1].copy()
-    last_row['identifier'] = 'new'
-    new_rows.append(last_row)
+# Apply the function to each flight group
+df_grouped = df.groupby('no').apply(update_top_countries)
 
-# Convert the list of new rows to a DataFrame and concatenate with the original df
-new_df = pd.DataFrame(new_rows)
-df = pd.concat([df, new_df], ignore_index=True)
-
-# 3. Populate the New Rows
-# Dep_month: Current month
-current_month = pd.Timestamp.now().month
-df.loc[df['identifier'] == 'new', 'Dep_month'] = current_month
-
-# Four columns with mean values
-cols_to_mean = ['Voyage_days', 'mean_voyagewk_routes', 'route_class_count', 'Arr_month']
-for col in cols_to_mean:
-    means = df.groupby('no')[col].transform('mean')
-    df.loc[df['identifier'] == 'new', col] = means[df['identifier'] == 'new']
-
-# Lag values for load_country and discharge_country
-for lag in range(1, 4):
-    df[f'prev_load_ctr{lag}'] = df.groupby('no')['load_country'].shift(lag)
-    df[f'prev_disc_ctr{lag}'] = df.groupby('no')['discharge_country'].shift(lag)
-
-# Keep Unique_routes and datagroup_1, datagroup_2 unchanged
-# (This step is not needed as they are already copied over in the new rows)
-
-# Return the final DataFrame with features only
-final_df = df[features]
-
-final_df
+# Fill NaN values with a placeholder (like 'None' or '')
+df_grouped.fillna('', inplace=True)
