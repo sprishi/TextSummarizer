@@ -14,3 +14,48 @@ def get_top_countries(group):
 
 df_combined.groupby('no').apply(get_top_countries)
 
+
+
+
+
+---------------
+
+
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, ExtraTreesClassifier, AdaBoostClassifier
+from lightgbm import LGBMClassifier
+from sklearn.svm import SVC
+from sklearn.metrics import accuracy_score, f1_score
+
+# List of classifiers
+classifiers = [
+    ("Random Forest", RandomForestClassifier()),
+    ("Gradient Boosting", GradientBoostingClassifier()),
+    ("LightGBM", LGBMClassifier()),
+    ("Extra Trees", ExtraTreesClassifier()),
+    ("AdaBoost", AdaBoostClassifier()),
+    ("SVM Linear", SVC(kernel='linear', probability=True))  # probability=True for potential future use in predict_proba
+]
+
+# Loop through classifiers
+results = []
+
+for name, clf in classifiers:
+    # Train model
+    clf.fit(X_train, y_train)
+    
+    # Predict on test set
+    y_pred = clf.predict(X_test)
+    
+    # Calculate metrics
+    acc = accuracy_score(y_test, y_pred)
+    f1 = f1_score(y_test, y_pred, average='macro')  # macro average for multi-class classification
+    
+    # Store results
+    results.append((name, acc, f1))
+
+# Print results
+for name, acc, f1 in results:
+    print(f"Results for {name}:")
+    print(f"Accuracy: {acc:.4f}")
+    print(f"F1 Score: {f1:.4f}")
+    print("----------")
