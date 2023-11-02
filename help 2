@@ -1,22 +1,16 @@
+# Assuming df is your entire dataset and df_new is your unseen data
+df_combined = pd.concat([df, df_new])
 
-# Sort the dataframe by 'no' and departure date
-df = df.sort_values(by=['no', 'departuredate'])
-
-# Function to update the top countries for each row
-def update_top_countries(flight_df):
-    load_countries = flight_df['load_country'].tolist()
-    top_countries = []
-    
-    for idx, country in enumerate(load_countries):
-        top_countries.append(country)
+# Function to get the top countries for each flight
+def get_top_countries(group):
+    top_countries = group['load_country'].value_counts().index.tolist()
+    next_idx = group.index[-1] + 1
+    if next_idx in df_combined.index:  # Check if there's a next row
         for i in range(5):
-            if idx >= i:
-                flight_df.at[flight_df.index[idx], f'top_country_{i+1}'] = top_countries[-(i+1)]
-                
-    return flight_df
+            if i < len(top_countries):
+                df_combined.at[next_idx, f'top_country_{i+1}'] = top_countries[i]
+            else:
+                df_combined.at[next_idx, f'top_country_{i+1}'] = None
 
-# Apply the function to each flight group
-df_grouped = df.groupby('no').apply(update_top_countries)
+df_combined.groupby('no').apply(get_top_countries)
 
-# Fill NaN values with a placeholder (like 'None' or '')
-df_grouped.fillna('', inplace=True)
