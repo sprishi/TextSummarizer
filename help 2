@@ -20,42 +20,40 @@ df_combined.groupby('no').apply(get_top_countries)
 
 ---------------
 
-
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, ExtraTreesClassifier, AdaBoostClassifier
-from lightgbm import LGBMClassifier
-from sklearn.svm import SVC
+import numpy as np
+import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense, Masking
 from sklearn.metrics import accuracy_score, f1_score
 
-# List of classifiers
-classifiers = [
-    ("Random Forest", RandomForestClassifier()),
-    ("Gradient Boosting", GradientBoostingClassifier()),
-    ("LightGBM", LGBMClassifier()),
-    ("Extra Trees", ExtraTreesClassifier()),
-    ("AdaBoost", AdaBoostClassifier()),
-    ("SVM Linear", SVC(kernel='linear', probability=True))  # probability=True for potential future use in predict_proba
-]
+# Prepare sequences
+X_list = []
+y_list = []
 
-# Loop through classifiers
-results = []
+for flight_no in X_train['no'].unique():
+    flight_data = X_train[X_train['no'] == flight_no]
+    X_list.append(flight_data.drop('no', axis=1).values)  # assuming 'no' is the flight number column
+    y_list.append(y_train.loc[flight_data.index])
 
-for name, clf in classifiers:
-    # Train model
-    clf.fit(X_train, y_train)
-    
-    # Predict on test set
-    y_pred = clf.predict(X_test)
-    
-    # Calculate metrics
-    acc = accuracy_score(y_test, y_pred)
-    f1 = f1_score(y_test, y_pred, average='macro')  # macro average for multi-class classification
-    
-    # Store results
-    results.append((name, acc, f1))
+# Padding sequences
+X_padded = tf.keras.preprocessing.sequence.pad_sequences(X_list, padding='post', dtype='float32')
+y_padded = tf.keras.preprocessing.sequence.pad_sequences(y_list, padding='post', dtype='int32')
 
-# Print results
-for name, acc, f1 in results:
-    print(f"Results for {name}:")
-    print(f"Accuracy: {acc:.4f}")
-    print(f"F1 Score: {f1:.4f}")
-    print("----------")
+# Define LSTM model
+model = Sequential()
+model.add(Masking(mask_value=0., input_shape=(X_padded.shape[1], X_padded.shape[2])))  # Masking layer for padded values
+model.add(LSTM(50, return_sequences=True))
+model.add(LSTM(50))
+model.add(Dense(len(np.unique(y_encoded)), activation='softmax'))
+model.compile(loss='sparse_categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
+
+# Train model
+model.fit(X_padded, y_padded, epochs=50, batch_size=32, verbose=1)
+
+# Prediction and Evaluation
+y_pred = model.predict(X_padded)
+y_pred_classes = np.argmax(y_pred, axis=1)
+
+print("Accuracy:", accuracy_score(y_padded, y_pred_classes))
+print("F1 Score:", f1_score(y_padded, y_pred_classes, average='macro'))
+
