@@ -20,62 +20,90 @@ df_combined.groupby('no').apply(get_top_countries)
 
 ---------------
 
+
 import numpy as np
-from keras.models import Sequential
-from keras.layers import LSTM, Dense, Dropout
-from keras.callbacks import EarlyStopping
-from sklearn.preprocessing import StandardScaler
+import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense, Masking, Dropout
+from tensorflow.keras.callbacks import EarlyStopping
 from sklearn.metrics import accuracy_score, f1_score
-from tensorflow.keras.utils import to_categorical
-from keras.optimizers import Adam
+from tensorflow.keras import backend as K
 
-# Assuming y_train and y_test are already label encoded
-num_classes = np.max(y_train) + 1
+# Custom F1 score metric
+def f1(y_true, y_pred):
+    def recall(y_true, y_pred):
+        true_positives = K.sum(K.round(K.clip(y_true * y_pred, 0, 1)))
+        possible_positives = K.sum(K.round(K.clip(y_true, 0, 1)))
+        recall = true_positives / (possible_positives + K.epsilon())
+        return recall
 
-# Convert target to categorical
-y_train_categorical = to_categorical(y_train, num_classes=num_classes)
-y_test_categorical = to_categorical(y_test, num_classes=num_classes)
+    def precision(y_true, y_pred):
+        true_positives = K.sum(K.round(K.clip(y_true * y_pred, 0, 1)))
+        predicted_positives = K.sum(K.round(K.clip(y_pred, 0, 1)))
+        precision = true_positives / (predicted_positives + K.epsilon())
+        return precision
 
-# Reshaping the input data for LSTM
-X_train_reshaped = X_train.reshape((X_train.shape[0], 1, X_train.shape[1]))
-X_test_reshaped = X_test.reshape((X_test.shape[0], 1, X_test.shape[1]))
+    precision = precision(y_true, y_pred)
+    recall = recall(y_true, y_pred)
+    return 2*((precision*recall)/(precision+recall+K.epsilon()))
 
-# LSTM Model
+# Prepare sequences
+def create_sequences(X, y, unique_nos, take_last_n=1):
+    X_list = []
+    y_list = []
+    for flight_no in unique_nos:
+        flight_data = X[X['no'] == flight_no]
+        X_list.append(flight_data.drop('no', axis=1).values)  # assuming 'no' is the flight number column
+        y_list.append(y.loc[flight_data.index][-take_last_n])  # get only the last value for y
+    return X_list, y_list
+
+# Splitting the data into train and validation based on the last occurrence
+unique_flight_numbers = X_train['no'].unique()
+validation_flight_numbers = [X_train[X_train['no'] == no].iloc[-1] for no in unique_flight_numbers]
+validation_indices = [index for index, _ in validation_flight_numbers]
+X_val = X_train.loc[validation_indices]
+y_val = y_train.loc[validation_indices]
+X_train = X_train.drop(validation_indices)
+y_train = y_train.drop(validation_indices)
+
+# Creating sequences for training, validation, and test sets
+X_train_list, y_train_list = create_sequences(X_train, y_train, X_train['no'].unique())
+X_val_list, y_val_list = create_sequences(X_val, y_val, X_val['no'].unique())
+X_test_list, y_test_list = create_sequences(X_test, y_test, X_test['no'].unique())
+
+# Padding sequences
+X_train_padded = tf.keras.preprocessing.sequence.pad_sequences(X_train_list, padding='post', dtype='float32')
+y_train_padded = np.array(y_train_list)
+X_val_padded = tf.keras.preprocessing.sequence.pad_sequences(X_val_list, padding='post', dtype='float32')
+y_val_padded = np.array(y_val_list)
+X_test_padded = tf.keras.preprocessing.sequence.pad_sequences(X_test_list, padding='post', dtype='float32')
+y_test_padded = np.array(y_test_list)
+
+# Define LSTM model
 model = Sequential()
-model.add(LSTM(64, input_shape=(X_train_reshaped.shape[1], X_train_reshaped.shape[2]), return_sequences=True))
-model.add(Dropout(0.5))
-model.add(LSTM(32, return_sequences=False))
-model.add(Dropout(0.5))
-model.add(Dense(num_classes, activation='softmax'))
-
-# Compile model
-optimizer = Adam(learning_rate=0.001)
-model.compile(optimizer=optimizer, loss='categorical_crossentropy', metrics=['accuracy'])
+model.add(Masking(mask_value=0., input_shape=(X_train_padded.shape[1], X_train_padded.shape[2])))  # Masking layer for padded values
+model.add(LSTM(50, return_sequences=True))
+model.add(Dropout(0.1))
+model.add(LSTM(50))
+model.add(Dropout(0.1))
+model.add(Dense(len(np.unique(y_train)), activation='softmax'))
 
 # Early stopping
 early_stopping = EarlyStopping(monitor='val_loss', patience=5)
 
-# Fit the model
-history = model.fit(
-    X_train_reshaped, 
-    y_train_categorical, 
-    epochs=200, 
-    batch_size=32,
-    validation_split=0.1, 
-    callbacks=[early_stopping], 
-    verbose=1
-)
+model.compile(loss='sparse_categorical_crossentropy', optimizer='adam', metrics=[f1])
 
-# Predictions
-y_pred_probabilities = model.predict(X_test_reshaped)
-y_pred = np.argmax(y_pred_probabilities, axis=1)
+# Train model
+history = model.fit(X_train_padded, y_train_padded, epochs=50, batch_size=32, verbose=1,
+                    validation_data=(X_val_padded, y_val_padded), callbacks=[early_stopping])
 
-# Evaluation
-accuracy = accuracy_score(y_test, y_pred)
-f1 = f1_score(y_test, y_pred, average='macro')
+# Prediction and Evaluation on test set
+y_pred = model.predict(X_test_padded)
+y_pred_classes = np.argmax(y_pred, axis=1)
 
-print(f'Accuracy: {accuracy}')
-print(f'F1 Score: {f1}')
+print("Accuracy on test set:", accuracy_score(y_test_padded, y_pred_classes))
+print("F1 Score on test set:", f1_score(y_test_padded, y_pred_classes, average='macro'))
+
 
 
 
