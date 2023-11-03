@@ -22,68 +22,61 @@ df_combined.groupby('no').apply(get_top_countries)
 
 import numpy as np
 from keras.models import Sequential
-from keras.layers import Dense, LSTM, Dropout, Masking
-from keras.optimizers import Adam
+from keras.layers import LSTM, Dense, Dropout
 from keras.callbacks import EarlyStopping
-from keras.regularizers import l2
-from sklearn.metrics import f1_score, accuracy_score
-from keras import backend as K
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import accuracy_score, f1_score
+from tensorflow.keras.utils import to_categorical
+from keras.optimizers import Adam
 
-# Custom F1 Score metric
-def f1(y_true, y_pred):
-    def recall(y_true, y_pred):
-        true_positives = K.sum(K.round(K.clip(y_true * y_pred, 0, 1)))
-        possible_positives = K.sum(K.round(K.clip(y_true, 0, 1)))
-        recall = true_positives / (possible_positives + K.epsilon())
-        return recall
+# Assuming y_train and y_test are already label encoded
+num_classes = np.max(y_train) + 1
 
-    def precision(y_true, y_pred):
-        true_positives = K.sum(K.round(K.clip(y_true * y_pred, 0, 1)))
-        predicted_positives = K.sum(K.round(K.clip(y_pred, 0, 1)))
-        precision = true_positives / (predicted_positives + K.epsilon())
-        return precision
-    
-    precision = precision(y_true, y_pred)
-    recall = recall(y_true, y_pred)
-    return 2*((precision*recall)/(precision+recall+K.epsilon()))
+# Convert target to categorical
+y_train_categorical = to_categorical(y_train, num_classes=num_classes)
+y_test_categorical = to_categorical(y_test, num_classes=num_classes)
 
-# Splitting data to train and validation sets
-train_indices = int(0.9 * X_train_padded.shape[0])
-X_val_padded = X_train_padded[train_indices:]
-y_val_padded = y_train_padded[train_indices:]
-X_train_padded = X_train_padded[:train_indices]
-y_train_padded = y_train_padded[:train_indices]
+# Reshaping the input data for LSTM
+X_train_reshaped = X_train.reshape((X_train.shape[0], 1, X_train.shape[1]))
+X_test_reshaped = X_test.reshape((X_test.shape[0], 1, X_test.shape[1]))
 
 # LSTM Model
 model = Sequential()
-model.add(Masking(mask_value=0, input_shape=(None, X_train_padded.shape[2])))
-model.add(LSTM(100, return_sequences=True, kernel_regularizer=l2(0.01)))
+model.add(LSTM(64, input_shape=(X_train_reshaped.shape[1], X_train_reshaped.shape[2]), return_sequences=True))
 model.add(Dropout(0.5))
-model.add(LSTM(50, kernel_regularizer=l2(0.01)))
+model.add(LSTM(32, return_sequences=False))
 model.add(Dropout(0.5))
-model.add(Dense(y_encoded.max()+1, activation='softmax'))
+model.add(Dense(num_classes, activation='softmax'))
 
-# Optimizer
+# Compile model
 optimizer = Adam(learning_rate=0.001)
-model.compile(optimizer=optimizer, loss='sparse_categorical_crossentropy', metrics=['accuracy', f1])
+model.compile(optimizer=optimizer, loss='categorical_crossentropy', metrics=['accuracy'])
 
 # Early stopping
-early_stopping = EarlyStopping(monitor='val_loss', patience=10)
+early_stopping = EarlyStopping(monitor='val_loss', patience=5)
 
-# Model Training
-history = model.fit(X_train_padded, y_train_padded, epochs=500, batch_size=32, 
-                    validation_data=(X_val_padded, y_val_padded), callbacks=[early_stopping], verbose=1)
+# Fit the model
+history = model.fit(
+    X_train_reshaped, 
+    y_train_categorical, 
+    epochs=200, 
+    batch_size=32,
+    validation_split=0.1, 
+    callbacks=[early_stopping], 
+    verbose=1
+)
 
 # Predictions
-y_pred = model.predict(X_test_padded)
-y_pred_labels = np.argmax(y_pred, axis=1)
+y_pred_probabilities = model.predict(X_test_reshaped)
+y_pred = np.argmax(y_pred_probabilities, axis=1)
 
 # Evaluation
-accuracy = accuracy_score(y_test_padded, y_pred_labels)
-f1 = f1_score(y_test_padded, y_pred_labels, average='macro')
+accuracy = accuracy_score(y_test, y_pred)
+f1 = f1_score(y_test, y_pred, average='macro')
 
-print("Accuracy:", accuracy)
-print("F1 Score:", f1)
+print(f'Accuracy: {accuracy}')
+print(f'F1 Score: {f1}')
+
 
 
 
