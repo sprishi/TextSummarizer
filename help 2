@@ -2,21 +2,28 @@
 import pandas as pd
 
 def update_top_locations(group):
-    # Track the frequency of each load country
-    freq = group['load_en'].value_counts()
+    # Initialize a list to hold the top locations for each row
+    top_locs = []
+    # Initialize a dictionary to hold the frequency of each location
+    freq = {}
     
-    # Create top locations DataFrame with shifted values for the next journey
-    top_locs_df = (group['load_en']
-                   .apply(lambda x: freq[freq < freq[x]].sort_values(ascending=False).index.tolist())
-                   .apply(pd.Series)
-                   .rename(columns=lambda x: f'top_loc_{x+1}'))
+    # Iterate over each load country in the group
+    for country in group['load_en']:
+        # Update the frequency dictionary
+        freq[country] = freq.get(country, 0) + 1
+        # Create a sorted list of countries by their frequency
+        sorted_countries = sorted(freq, key=freq.get, reverse=True)
+        # Append the top 5 countries to the top_locs list, using None if there are less than 5
+        top_locs.append(sorted_countries[:5] + [None]*(5-len(sorted_countries)))
     
-    # Return combined group with shifted top locations
-    return group.assign(**top_locs_df.shift().iloc[:, :5])
+    # Convert the list of top locations into a DataFrame
+    top_locs_df = pd.DataFrame(top_locs, columns=[f'top_loc_{i}' for i in range(1, 6)])
+    # Shift the data down by one row so the current load country affects the next row
+    group = group.join(top_locs_df.shift(1))
+    return group
 
-# Apply the function to each flight group and reset the index
+# Apply the function to each flight group
 updated_df = data_df.groupby('flight_no').apply(update_top_locations).reset_index(drop=True)
-
 
 
 
