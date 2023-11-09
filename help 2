@@ -1,3 +1,27 @@
+
+import pandas as pd
+
+def update_top_locations(group):
+    # Track the frequency of each load country
+    freq = group['load_en'].value_counts()
+    
+    # Create top locations DataFrame with shifted values for the next journey
+    top_locs_df = (group['load_en']
+                   .apply(lambda x: freq[freq < freq[x]].sort_values(ascending=False).index.tolist())
+                   .apply(pd.Series)
+                   .rename(columns=lambda x: f'top_loc_{x+1}'))
+    
+    # Return combined group with shifted top locations
+    return group.assign(**top_locs_df.shift().iloc[:, :5])
+
+# Apply the function to each flight group and reset the index
+updated_df = data_df.groupby('flight_no').apply(update_top_locations).reset_index(drop=True)
+
+
+
+
+------------- 
+
 # Assuming df is your entire dataset and df_new is your unseen data
 df_combined = pd.concat([df, df_new])
 
