@@ -1,4 +1,76 @@
 
+
+import numpy as np
+import pandas as pd
+from sklearn.preprocessing import LabelEncoder
+from sklearn.model_selection import train_test_split
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense, Embedding, Masking
+from tensorflow.keras import utils
+from sklearn.metrics import accuracy_score, f1_score
+
+# Assuming df is your DataFrame
+# and 'load_country_encoded' and 'discharge_country_encoded' are already label encoded
+
+# Splitting the dataset into train, validation, and test sets
+# Getting the last occurrence for each flight number for the test set
+test_idx = df.groupby('no').tail(1).index
+# Getting the second last occurrence for each flight number for the validation set
+validation_idx = df.groupby('no').nth(-2).dropna().index
+train_idx = df.index.difference(test_idx.union(validation_idx))
+
+# Creating train, validation, and test sets
+train = df.loc[train_idx]
+validation = df.loc[validation_idx]
+test = df.loc[test_idx]
+
+# Creating sequences
+def create_sequences(df, label_col):
+    X_list, y_list = [], []
+    for flight_no in df['no'].unique():
+        flight_data = df[df['no'] == flight_no]
+        X_list.append(flight_data.drop(['no', label_col], axis=1).values)
+        y_list.append(flight_data[label_col].values[-1])
+    return np.array(X_list), np.array(y_list)
+
+X_train, y_train = create_sequences(train, 'load_country_encoded')
+X_validation, y_validation = create_sequences(validation, 'load_country_encoded')
+X_test, y_test = create_sequences(test, 'load_country_encoded')
+
+# Padding the sequences
+X_train_padded = utils.sequence.pad_sequences(X_train, padding='post', dtype='float32')
+X_validation_padded = utils.sequence.pad_sequences(X_validation, padding='post', dtype='float32')
+X_test_padded = utils.sequence.pad_sequences(X_test, padding='post', dtype='float32')
+
+# Model parameters
+max_features = df['load_country_encoded'].max() + 1  # Plus one for potential zero padding
+embedding_size = 50  # Example embedding size, this is a hyperparameter you can tune
+lstm_units = 50  # LSTM units, another hyperparameter
+
+# Define LSTM model with Embedding
+model = Sequential()
+model.add(Embedding(input_dim=max_features, output_dim=embedding_size))
+model.add(Masking(mask_value=0.))  # Masking layer for handling different sequence lengths
+model.add(LSTM(lstm_units))
+model.add(Dense(max_features, activation='softmax'))  # Output layer
+
+# Compile the model
+model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+
+# Train the model
+history = model.fit(X_train_padded, y_train, epochs=50, batch_size=32, 
+                    validation_data=(X_validation_padded, y_validation), verbose=1)
+
+# Prediction and evaluation
+y_pred = model.predict(X_test_padded)
+y_pred_classes = np.argmax(y_pred, axis=1)
+print("Test Accuracy:", accuracy_score(y_test, y_pred_classes))
+print("Test F1 Score:", f1_score(y_test, y_pred_classes, average='macro'))
+
+
+
+------------------------------------------------------------------------
+
 import pandas as pd
 
 def update_top_locations(group):
