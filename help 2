@@ -1,46 +1,60 @@
-# Parameter grid for XGBoost
+from sklearn.model_selection import TimeSeriesSplit, RandomizedSearchCV
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score, f1_score
+
+# Assuming 'train' and 'test' are your prepared datasets
+X_train = train[features]
+X_test = test[features]
+y_train = train[target]
+y_test = test[target]
+
+# TimeSeries Cross-validation
+tscv = TimeSeriesSplit(n_splits=5)
+
+# Parameter grid for Random Forest
 param_grid = {
     'n_estimators': [100, 200, 300],
-    'max_depth': [3, 6, 9],
-    'learning_rate': [0.01, 0.1, 0.3],
-    'subsample': [0.7, 0.8, 0.9],
-    'colsample_bytree': [0.7, 0.8, 0.9]
+    'max_depth': [None, 10, 20, 30],
+    'min_samples_split': [2, 5, 10],
+    'min_samples_leaf': [1, 2, 4],
+    'bootstrap': [True, False]
 }
 
+# Random Forest Classifier
+rf_model = RandomForestClassifier()
+
 # RandomizedSearch with TimeSeriesSplit
-random_search = RandomizedSearchCV(
-    estimator=model,
+random_search_rf = RandomizedSearchCV(
+    estimator=rf_model,
     param_distributions=param_grid,
-    n_iter=100,  # Number of parameter settings sampled. Adjust as necessary.
-    scoring='accuracy',  # or use 'f1' for F1 score, or other relevant metrics
+    n_iter=100,  # Adjust based on computational resources
+    scoring='accuracy',  # or 'f1' or other relevant metrics
     cv=tscv,
     verbose=2,
     random_state=42,
-    n_jobs=-1  # Use parallel processing. Set to -1 to use all cores
+    n_jobs=-1  # Use all cores
 )
 
-# XGBoost Classifier
-model = XGBClassifier()
-
 # Fit the random search model
-random_search.fit(X_train, y_train)
+random_search_rf.fit(X_train, y_train)
 
 # Best hyperparameters
-print("Best Hyperparameters:", random_search.best_params_)
+print("Best Hyperparameters:", random_search_rf.best_params_)
 
 # Train the model with best parameters on the full training set
-best_model = XGBClassifier(**random_search.best_params_)
-best_model.fit(X_train, y_train)
+best_rf_model = RandomForestClassifier(**random_search_rf.best_params_)
+best_rf_model.fit(X_train, y_train)
 
 # Predict on test set
-y_pred = best_model.predict(X_test)
+y_pred_rf = best_rf_model.predict(X_test)
 
 # Model Evaluation
-accuracy = accuracy_score(y_test, y_pred)
-f1 = f1_score(y_test, y_pred, average='macro')  # 'macro' for unbalanced classes
+accuracy_rf = accuracy_score(y_test, y_pred_rf)
+f1_rf = f1_score(y_test, y_pred_rf, average='macro')  # Adjust based on class balance
 
-print("Test Accuracy:", accuracy)
-print("Test F1 Score:", f1)
+print("Test Accuracy:", accuracy_rf)
+print("Test F1 Score:", f1_rf)
+
 
 
 --------------------------------
