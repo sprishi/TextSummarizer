@@ -1,5 +1,5 @@
 from sklearn.model_selection import TimeSeriesSplit, RandomizedSearchCV
-from sklearn.ensemble import RandomForestClassifier
+import lightgbm as lgb
 from sklearn.metrics import accuracy_score, f1_score
 
 # Assuming 'train' and 'test' are your prepared datasets
@@ -11,21 +11,22 @@ y_test = test[target]
 # TimeSeries Cross-validation
 tscv = TimeSeriesSplit(n_splits=5)
 
-# Parameter grid for Random Forest
+# Parameter grid for LightGBM
 param_grid = {
+    'num_leaves': [31, 50, 100],
+    'max_depth': [-1, 10, 20],
+    'learning_rate': [0.01, 0.1, 0.3],
     'n_estimators': [100, 200, 300],
-    'max_depth': [None, 10, 20, 30],
-    'min_samples_split': [2, 5, 10],
-    'min_samples_leaf': [1, 2, 4],
-    'bootstrap': [True, False]
+    'subsample': [0.7, 0.8, 1.0],
+    'colsample_bytree': [0.7, 0.8, 1.0]
 }
 
-# Random Forest Classifier
-rf_model = RandomForestClassifier()
+# LightGBM Classifier
+lgb_model = lgb.LGBMClassifier()
 
 # RandomizedSearch with TimeSeriesSplit
-random_search_rf = RandomizedSearchCV(
-    estimator=rf_model,
+random_search_lgb = RandomizedSearchCV(
+    estimator=lgb_model,
     param_distributions=param_grid,
     n_iter=100,  # Adjust based on computational resources
     scoring='accuracy',  # or 'f1' or other relevant metrics
@@ -36,24 +37,24 @@ random_search_rf = RandomizedSearchCV(
 )
 
 # Fit the random search model
-random_search_rf.fit(X_train, y_train)
+random_search_lgb.fit(X_train, y_train)
 
 # Best hyperparameters
-print("Best Hyperparameters:", random_search_rf.best_params_)
+print("Best Hyperparameters:", random_search_lgb.best_params_)
 
 # Train the model with best parameters on the full training set
-best_rf_model = RandomForestClassifier(**random_search_rf.best_params_)
-best_rf_model.fit(X_train, y_train)
+best_lgb_model = lgb.LGBMClassifier(**random_search_lgb.best_params_)
+best_lgb_model.fit(X_train, y_train)
 
 # Predict on test set
-y_pred_rf = best_rf_model.predict(X_test)
+y_pred_lgb = best_lgb_model.predict(X_test)
 
 # Model Evaluation
-accuracy_rf = accuracy_score(y_test, y_pred_rf)
-f1_rf = f1_score(y_test, y_pred_rf, average='macro')  # Adjust based on class balance
+accuracy_lgb = accuracy_score(y_test, y_pred_lgb)
+f1_lgb = f1_score(y_test, y_pred_lgb, average='macro')  # Adjust based on class balance
 
-print("Test Accuracy:", accuracy_rf)
-print("Test F1 Score:", f1_rf)
+print("Test Accuracy:", accuracy_lgb)
+print("Test F1 Score:", f1_lgb)
 
 
 
