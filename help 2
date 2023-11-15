@@ -1,3 +1,36 @@
+
+from sklearn.metrics import accuracy_score, f1_score
+import numpy as np
+
+# Assuming 'train' and 'test' are your prepared datasets
+X_train = train[features]
+y_train = train[target]
+X_test = test[features]
+y_test = test[target]
+
+# Define the model with initial parameters
+model = XGBClassifier()  # Replace with your chosen model
+
+# Walk-forward validation
+n_splits = 10  # Number of splits
+window_size = len(X_train) // n_splits  # Size of each training set
+
+for i in range(1, n_splits + 1):
+    split_size = window_size * i
+    X_train_split = X_train[:split_size]
+    y_train_split = y_train[:split_size]
+
+    # Fit the model
+    model.fit(X_train_split, y_train_split)
+
+    # Evaluate on the next step
+    y_pred = model.predict(X_test)
+    print(f"Split {i}: Accuracy = {accuracy_score(y_test, y_pred)}, F1 Score = {f1_score(y_test, y_pred, average='macro')}")
+
+
+
+--------------
+
 from sklearn.model_selection import TimeSeriesSplit, RandomizedSearchCV
 import lightgbm as lgb
 from sklearn.metrics import accuracy_score, f1_score
