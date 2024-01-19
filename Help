@@ -1,3 +1,59 @@
+
+import pandas as pd
+from geopy.distance import geodesic
+
+# Function to calculate distance in nautical miles
+def calculate_distance(lat1, lon1, lat2, lon2):
+    return geodesic((lat1, lon1), (lat2, lon2)).nautical
+
+# Function to find the nearest location
+def find_nearest_location(person_df, location_df):
+    nearest_locations = []
+
+    for _, person in person_df.iterrows():
+        min_distance = float('inf')
+        nearest_location = None
+
+        for _, location in location_df.iterrows():
+            distance = calculate_distance(
+                person['latitude'], person['longitude'], 
+                location['latitude'], location['longitude']
+            )
+
+            if distance < min_distance:
+                min_distance = distance
+                nearest_location = location['location_name']
+
+        nearest_locations.append((nearest_location, min_distance))
+
+    return nearest_locations
+
+# Example DataFrames
+# person_df = pd.DataFrame({
+#     'latitude': [person_latitude1, person_latitude2, ...],
+#     'longitude': [person_longitude1, person_longitude2, ...]
+# })
+
+# location_df = pd.DataFrame({
+#     'location_name': ['Location1', 'Location2', ...],
+#     'latitude': [location_latitude1, location_latitude2, ...],
+#     'longitude': [location_longitude1, location_longitude2, ...]
+# })
+
+# Applying the function
+nearest_location_results = find_nearest_location(person_df, location_df)
+
+# Adding results to the person DataFrame
+person_df[['nearest_location', 'distance_nm']] = pd.DataFrame(nearest_location_results, index=person_df.index)
+
+# Display the updated person DataFrame
+print(person_df)
+
+
+
+
+==============
+
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
