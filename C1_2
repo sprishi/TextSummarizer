@@ -1,0 +1,149 @@
+Sure, I'll provide you with the complete implementation of the `segment_trajectories` function and an optimized code for training the model efficiently on large datasets using PySpark.
+
+First, let's define the `segment_trajectories` function:
+
+```python
+from pyspark.sql.functions import *
+from pyspark.sql.window import Window
+
+@udf("array<struct<lat:double,lon:double,timestamp:timestamp>>")
+def segment_trajectories(trajectory):
+    """
+    Function to segment a vessel's trajectory based on spatial and temporal proximity.
+    
+    Args:
+        trajectory (pyspark.sql.DataFrame): A DataFrame containing the vessel's trajectory data.
+        
+    Returns:
+        list: A list of trajectory segments, where each segment is a list of (lat, lon, timestamp) tuples.
+    """
+    segments = []
+    current_segment = []
+    prev_lat, prev_lon, prev_ts = None, None, None
+    
+    # Sort the trajectory by timestamp
+    sorted_trajectory = trajectory.sort("timestamp").collect()
+    
+    for row in sorted_trajectory:
+        lat, lon, ts = row.lat, row.lon, row.timestamp
+        
+        # Check if the current point is within spatial and temporal proximity of the previous point
+        if prev_lat is not None and (haversine_distance(lat, lon, prev_lat, prev_lon) > spatial_threshold or (ts - prev_ts).total_seconds() > temporal_threshold):
+            # If not, start a new segment
+            if current_segment:
+                segments.append(current_segment)
+                current_segment = []
+        
+        # Add the current point to the current segment
+        current_segment.append((lat, lon, ts))
+        prev_lat, prev_lon, prev_ts = lat, lon, ts
+    
+    # Add the last segment
+    if current_segment:
+        segments.append(current_segment)
+    
+    return segments
+```
+
+This function takes a DataFrame containing a vessel's trajectory data (latitude, longitude, and timestamp) and segments the trajectory based on spatial and temporal proximity thresholds. The spatial threshold (`spatial_threshold`) determines the maximum distance between consecutive points to be considered part of the same segment, while the temporal threshold (`temporal_threshold`) determines the maximum time difference.
+
+The function returns a list of trajectory segments, where each segment is a list of tuples containing (latitude, longitude, timestamp). You can adjust the `spatial_threshold` and `temporal_threshold` values based on your specific requirements.
+
+Now, for the optimized code to train the model efficiently on large datasets using PySpark:
+
+```python
+from pyspark.sql.functions import *
+from pyspark.ml.feature import VectorAssembler
+from pyspark.ml.clustering import KMeans
+from pyspark.ml import Pipeline
+from collections import Counter
+
+# Load AIS and port datasets
+ais_data = spark.table("ais_data")
+ports_data = spark.table("ports_data")
+
+# User-defined functions
+@udf("double")
+def haversine_distance(lat1, lon1, lat2, lon2):
+    # Haversine distance calculation (same as before)
+    ...
+
+@udf("double")
+def bearing(lat1, lon1, lat2, lon2):
+    # Bearing calculation (same as before)
+    ...
+
+# Data preprocessing and cleaning
+cleaned_ais_data = ais_data.na.drop() \
+                            .withColumn("timestamp", to_timestamp("timestamp_str", "yyyy-MM-dd HH:mm:ss")) \
+                            .dropDuplicates()
+
+# Join AIS data with port data
+ais_with_ports = cleaned_ais_data.join(ports_data, [haversine_distance(ais_data.lat, ais_data.lon, ports_data.lat, ports_data.lon) < distance_threshold], "left") \
+                                 .select(cleaned_ais_data.columns + ["port_name", "port_lat", "port_lon"])
+
+# Feature engineering
+feature_engineered_data = ais_with_ports.withColumn("dist_to_port", haversine_distance(ais_with_ports.lat, ais_with_ports.lon, ais_with_ports.port_lat, ais_with_ports.port_lon)) \
+                                         .withColumn("bearing_to_port", bearing(ais_with_ports.lat, ais_with_ports.lon, ais_with_ports.port_lat, ais_with_ports.port_lon)) \
+                                         .withColumn("hour", hour("timestamp")) \
+                                         .withColumn("day_of_week", dayofweek("timestamp")) \
+                                         .withColumn("speed_change", lag("speed").over(Window.partitionBy("vessel_id").orderBy("timestamp")) - "speed") \
+                                         .withColumn("heading_change", lag("heading").over(Window.partitionBy("vessel_id").orderBy("timestamp")) - "heading")
+
+# Identify trajectory segments
+trajectory_segments = feature_engineered_data.groupBy("vessel_id") \
+                                              .flatMap(lambda x: segment_trajectories(x[1])) \
+                                              .toDF(["segment_id", "vessel_id", "trajectory_segment"])
+
+# Vectorize trajectory segments
+vector_assembler = VectorAssembler(inputCols=["dist_to_port", "bearing_to_port", "hour", "day_of_week", "speed_change", "heading_change"],
+                                   outputCol="features")
+vectorized_segments = vector_assembler.transform(trajectory_segments)
+
+# Trajectory clustering
+kmeans = KMeans(featuresCol="features", k=10, seed=42)
+pipeline = Pipeline(stages=[kmeans])
+
+# Train the model using PySpark's model persistence for efficient training
+cluster_model = pipeline.fit(vectorized_segments.repartition(200).cache())
+
+# Save the trained model
+cluster_model.write().overwrite().save("path/to/model")
+
+# Function to estimate docking probabilities for a given cluster and trajectory segment
+def estimate_docking_probabilities(cluster_id, trajectory_segment):
+    # Filter historical segments in the same cluster
+    cluster_segments = clustered_segments.filter(clustered_segments.prediction == cluster_id)
+    
+    # Extract the port names from the cluster segments
+    port_names = cluster_segments.select("port_name").rdd.flatMap(lambda x: x).collect()
+    
+    # Count the occurrences of each port name
+    port_counts = Counter(port_names)
+    total_counts = sum(port_counts.values())
+    
+    # Calculate the docking probabilities
+    docking_probabilities = {port: count / total_counts for port, count in port_counts.items()}
+    
+    return docking_probabilities
+
+# Load the trained model
+cluster_model = KMeansModel.load("path/to/model")
+
+# Preprocess and feature engineer current data
+current_ais_data = spark.table("current_ais_data") # Load current AIS data
+current_feature_engineered = current_ais_data.withColumn("dist_to_port", haversine_distance(current_ais_data.lat, current_ais_data.lon, ports_data.lat, ports_data.lon)) \
+                                              .withColumn("bearing_to_port", bearing(current_ais_data.lat, current_ais_data.lon, ports_data.lat, ports_data.lon)) \
+                                              .withColumn("hour", hour("timestamp")) \
+                                              .withColumn("day_of_week", dayofweek("timestamp")) \
+                                              .withColumn("speed_change", lag("speed").over(Window.partitionBy("vessel_id").orderBy("timestamp")) - "speed") \
+                                              .withColumn("heading_change", lag("heading").over(Window.partitionBy("vessel_id").orderBy("timestamp")) - "heading")
+
+# Vectorize current trajectory segments
+vectorized_current_segments = vector_assembler.transform(current_feature_engineered)
+
+# Predict cluster assignment for current segments
+current_segment_clusters = cluster_model.transform(vectorized_current_segments)
+
+# Estimate docking probabilities for current segments
+docking_predictions = current_segment_clusters.rdd.map(lambda row: (row.segment_id, estimate_docking_probabilities(row.prediction, row.trajectory_segment))).toDF(["segment_id", "
