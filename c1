@@ -1,0 +1,131 @@
+Sure, I can rewrite the code using PySpark's DataFrame API to work with table data in the Dataiku platform. Here's the updated code:
+
+```python
+from pyspark.sql.functions import *
+from pyspark.ml.feature import VectorAssembler
+from pyspark.ml.clustering import KMeans
+from pyspark.ml import Pipeline
+from collections import Counter
+
+# Load AIS and port datasets
+ais_data = spark.table("ais_data")
+ports_data = spark.table("ports_data")
+
+# User-defined functions
+@udf("double")
+def haversine_distance(lat1, lon1, lat2, lon2):
+    # Convert decimal degrees to radians
+    lon1, lat1, lon2, lat2 = map(math.radians, [lon1, lat1, lon2, lat2])
+
+    # Haversine formula
+    dlon = lon2 - lon1
+    dlat = lat2 - lat1
+    a = math.sin(dlat/2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon/2)**2
+    c = 2 * math.asin(math.sqrt(a))
+    r = 6371  # Radius of earth in kilometers
+    return c * r
+
+@udf("double")
+def bearing(lat1, lon1, lat2, lon2):
+    # Convert decimal degrees to radians
+    lon1, lat1, lon2, lat2 = map(math.radians, [lon1, lat1, lon2, lat2])
+
+    # Bearing formula
+    dlon = lon2 - lon1
+    y = math.sin(dlon) * math.cos(lat2)
+    x = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(dlon)
+    brng = math.atan2(y, x)
+    return (brng * 180 / math.pi + 360) % 360
+
+# Data preprocessing and cleaning
+cleaned_ais_data = ais_data.na.drop() \
+                            .withColumn("timestamp", to_timestamp("timestamp_str", "yyyy-MM-dd HH:mm:ss")) \
+                            .dropDuplicates()
+
+# Join AIS data with port data
+ais_with_ports = cleaned_ais_data.join(ports_data, [haversine_distance(ais_data.lat, ais_data.lon, ports_data.lat, ports_data.lon) < distance_threshold], "left") \
+                                 .select(cleaned_ais_data.columns + ["port_name", "port_lat", "port_lon"])
+
+# Feature engineering
+feature_engineered_data = ais_with_ports.withColumn("dist_to_port", haversine_distance(ais_with_ports.lat, ais_with_ports.lon, ais_with_ports.port_lat, ais_with_ports.port_lon)) \
+                                         .withColumn("bearing_to_port", bearing(ais_with_ports.lat, ais_with_ports.lon, ais_with_ports.port_lat, ais_with_ports.port_lon)) \
+                                         .withColumn("hour", hour("timestamp")) \
+                                         .withColumn("day_of_week", dayofweek("timestamp")) \
+                                         .withColumn("speed_change", lag("speed").over(Window.partitionBy("vessel_id").orderBy("timestamp")) - "speed") \
+                                         .withColumn("heading_change", lag("heading").over(Window.partitionBy("vessel_id").orderBy("timestamp")) - "heading")
+
+# Identify trajectory segments
+trajectory_segments = feature_engineered_data.groupBy("vessel_id") \
+                                              .flatMap(lambda x: segment_trajectories(x[1])) \
+                                              .toDF(["segment_id", "vessel_id", "trajectory_segment"])
+
+# Vectorize trajectory segments
+vector_assembler = VectorAssembler(inputCols=["dist_to_port", "bearing_to_port", "hour", "day_of_week", "speed_change", "heading_change"],
+                                   outputCol="features")
+vectorized_segments = vector_assembler.transform(trajectory_segments)
+
+# Trajectory clustering
+kmeans = KMeans(featuresCol="features", k=10)
+pipeline = Pipeline(stages=[kmeans])
+cluster_model = pipeline.fit(vectorized_segments)
+clustered_segments = cluster_model.transform(vectorized_segments)
+
+# Function to estimate docking probabilities for a given cluster and trajectory segment
+def estimate_docking_probabilities(cluster_id, trajectory_segment):
+    # Filter historical segments in the same cluster
+    cluster_segments = clustered_segments.filter(clustered_segments.prediction == cluster_id)
+    
+    # Extract the port names from the cluster segments
+    port_names = cluster_segments.select("port_name").rdd.flatMap(lambda x: x).collect()
+    
+    # Count the occurrences of each port name
+    port_counts = Counter(port_names)
+    total_counts = sum(port_counts.values())
+    
+    # Calculate the docking probabilities
+    docking_probabilities = {port: count / total_counts for port, count in port_counts.items()}
+    
+    return docking_probabilities
+
+# Preprocess and feature engineer current data
+current_ais_data = spark.table("current_ais_data") # Load current AIS data
+current_feature_engineered = current_ais_data.withColumn("dist_to_port", haversine_distance(current_ais_data.lat, current_ais_data.lon, ports_data.lat, ports_data.lon)) \
+                                              .withColumn("bearing_to_port", bearing(current_ais_data.lat, current_ais_data.lon, ports_data.lat, ports_data.lon)) \
+                                              .withColumn("hour", hour("timestamp")) \
+                                              .withColumn("day_of_week", dayofweek("timestamp")) \
+                                              .withColumn("speed_change", lag("speed").over(Window.partitionBy("vessel_id").orderBy("timestamp")) - "speed") \
+                                              .withColumn("heading_change", lag("heading").over(Window.partitionBy("vessel_id").orderBy("timestamp")) - "heading")
+
+# Vectorize current trajectory segments
+vectorized_current_segments = vector_assembler.transform(current_feature_engineered)
+
+# Predict cluster assignment for current segments
+current_segment_clusters = cluster_model.transform(vectorized_current_segments)
+
+# Estimate docking probabilities for current segments
+docking_predictions = current_segment_clusters.rdd.map(lambda row: (row.segment_id, estimate_docking_probabilities(row.prediction, row.trajectory_segment))).toDF(["segment_id", "docking_probabilities"])
+
+# Print the predicted docking destinations and probabilities
+docking_predictions.show(truncate=False)
+```
+
+In this code:
+
+1. The `haversine_distance` and `bearing` functions are defined as PySpark user-defined functions (UDFs) using the `@udf` decorator.
+2. The AIS and port datasets are loaded from Dataiku tables using `spark.table("table_name")`.
+3. Data preprocessing and cleaning steps are performed on the AIS data using PySpark's DataFrame API.
+4. The AIS data is joined with the port data based on the distance between the AIS signal and the port coordinates, using the `haversine_distance` UDF.
+5. Feature engineering is performed using the `haversine_distance` and `bearing` UDFs, along with other relevant features like time-based features and derivative features.
+6. Distinct trajectory segments are identified for each vessel based on spatial or temporal proximity of AIS signals (the `segment_trajectories` function is not shown in the code).
+7. The trajectory segments are vectorized using the `VectorAssembler`.
+8. The `KMeans` clustering algorithm is applied to the vectorized trajectory segments, grouping them into clusters based on their feature vectors.
+9. The `estimate_docking_probabilities` function calculates the docking probabilities for a given cluster and trajectory segment by analyzing the historical trajectories within the cluster.
+10. The current AIS data is loaded from a Dataiku table and preprocessed using the same feature engineering steps as the historical data.
+11. The current trajectory segments are vectorized using the same `VectorAssembler`.
+12. The trained `cluster_model` is used to predict the cluster assignment for each current trajectory segment.
+13. The `estimate_docking_probabilities` function is applied to each current trajectory segment to estimate the docking probabilities based on the predicted cluster.
+14. The predicted docking destinations and their probabilities for each current trajectory segment are stored in the `docking_predictions` DataFrame and printed.
+
+Please note that this code assumes the existence of a function `segment_trajectories` to identify distinct trajectory segments for each vessel based on spatial or temporal proximity of AIS signals. You may need to implement this function based on your specific requirements and data characteristics.
+
+Additionally, you might need to adjust the code based on your data structures, distance thresholds, and clustering parameters. It's advisable to thoroughly validate and test your implementations before deploying them in a production environment.
