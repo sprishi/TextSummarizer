@@ -109,6 +109,11 @@ docking_predictions = current_segment_clusters.rdd.map(lambda row: (row.segment_
 docking_predictions.show(truncate=False)
 ```
 
+
+
+
+
+
 In this code:
 
 1. The `haversine_distance` and `bearing` functions are defined as PySpark user-defined functions (UDFs) using the `@udf` decorator.
@@ -129,3 +134,29 @@ In this code:
 Please note that this code assumes the existence of a function `segment_trajectories` to identify distinct trajectory segments for each vessel based on spatial or temporal proximity of AIS signals. You may need to implement this function based on your specific requirements and data characteristics.
 
 Additionally, you might need to adjust the code based on your data structures, distance thresholds, and clustering parameters. It's advisable to thoroughly validate and test your implementations before deploying them in a production environment.
+
+
+@@@@@@
+
+from pyspark.sql.functions import *
+from pyspark.sql.window import Window
+
+# Join AIS data with port data and calculate distance to nearest port/anchorage
+ais_with_ports = cleaned_ais_data.join(
+    ports_data.withColumn("distance", haversine_distance("lat", "lon", ports_data.lat, ports_data.lon)),
+    on=["lat", "lon"],
+    how="cross"
+).select(
+    cleaned_ais_data.columns + ["port_name", "port_type", "location", "port_lat", "port_lon", "distance"]
+).withColumn(
+    "rank",
+    row_number().over(Window.partitionBy("lat", "lon").orderBy("distance"))
+).where("rank = 1").drop("rank")
+
+# Feature engineering
+feature_engineered_data = ais_with_ports.withColumn("hour", hour("timestamp")) \
+                                         .withColumn("day_of_week", dayofweek("timestamp")) \
+                                         .withColumn("speed_change", lag("speed").over(Window.partitionBy("vessel_id").orderBy("timestamp")) - "speed") \
+                                         .withColumn("heading_change", lag("heading").over(Window.partitionBy("vessel_id").orderBy("timestamp")) - "heading")
+
+# Rest of the code remains the same
