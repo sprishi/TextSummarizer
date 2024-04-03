@@ -1,3 +1,63 @@
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, broadcast, row_number
+from pyspark.sql.window import Window
+
+# Initialize Spark session
+spark = SparkSession.builder.appName("Optimized Cross Join").getOrCreate()
+
+# Assuming cleaned_ais_data and ports_data are already loaded as Spark DataFrames
+# and haversine_distance is a registered UDF
+
+# Placeholder for the final result DataFrame
+final_result_df = None
+
+# Function to process each batch
+def process_batch(batch_df, ports_df):
+    # Perform the cross join with the broadcasted ports DataFrame
+    ais_ports_cross = batch_df.crossJoin(broadcast(ports_df))
+    
+    # Calculate distance and rank
+    ais_with_ports = ais_ports_cross.withColumn(
+        "distance",
+        haversine_distance(col("ais_lat"), col("ais_lon"), col("port_lat"), col("port_lon"))
+    ).withColumn(
+        "rank",
+        row_number().over(Window.partitionBy("ais_lat", "ais_lon").orderBy("distance"))
+    ).where("rank = 1").drop("rank")
+    
+    return ais_with_ports
+
+# Iterate over partitions or batches of the AIS data
+# This part depends on how you've partitioned or batched your cleaned_ais_data
+for batch_df in cleaned_ais_data.rdd.glom():  # Example: glom() is used for illustration; customize as needed
+    batch_spark_df = spark.createDataFrame(batch_df, schema=cleaned_ais_data.schema)  # Convert RDD partition back to DataFrame
+    
+    batch_result = process_batch(batch_spark_df, ports_data)
+    
+    if final_result_df is None:
+        final_result_df = batch_result
+    else:
+        final_result_df = final_result_df.union(batch_result)
+
+# final_result_df now contains the optimized results
+
+# Example: Repartitioning RDD before using glom() to control batch size
+desired_batch_size = 1000
+number_of_records = rdd.count()  # Total number of records in the RDD
+desired_num_partitions = number_of_records // desired_batch_size
+
+# Repartition RDD
+rdd_repartitioned = rdd.repartition(desired_num_partitions)
+
+# Apply glom() to create batches
+rdd_batches = rdd_repartitioned.glom()
+
+
+
+
+---------------------------
+
+
 from pyspark import SparkContext
 from pyspark.sql import SQLContext
 from sedona.utils import SedonaKryoRegistrator, KryoSerializer
