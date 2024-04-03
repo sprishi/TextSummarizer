@@ -1,3 +1,91 @@
+from pyspark import SparkContext
+from pyspark.sql import SQLContext
+from sedona.utils import SedonaKryoRegistrator, KryoSerializer
+from sedona.register import SedonaRegistrator
+from dataiku import spark as dkuspark
+
+# Initialize SparkContext and SQLContext
+sc = SparkContext.getOrCreate()
+sc.setSystemProperty("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
+sc.setSystemProperty("spark.kryo.registrator", "org.apache.sedona.core.serde.SedonaKryoRegistrator")
+
+sqlContext = SQLContext(sc)
+
+# Register Sedona with the existing SQLContext
+SedonaRegistrator.registerAll(sqlContext)
+
+# Load datasets using Dataiku dkuspark
+cleaned_ais_data = dkuspark.get_dataframe(sqlContext, "your_cleaned_ais_dataset_name")
+ports_data = dkuspark.get_dataframe(sqlContext, "your_ports_dataset_name")
+
+from sedona.register import SedonaRegistrator
+from sedona.utils import KryoSerializer, SedonaKryoRegistrator
+from sedona.core.formatMapper.shapefileParser import ShapefileReader
+from sedona.core.SpatialRDD import SpatialRDD
+from sedona.core.formatMapper import GeoJsonReader
+from sedona.core.spatialOperator import JoinQuery
+from sedona.sql.utils import Adapter
+from sedona.core.geom.envelope import Envelope
+from sedona.core.spatialOperator import KNNQuery
+from sedona.core.spatialOperator import RangeQuery
+from sedona.core.enums import FileDataSplitter
+from sedona.core.enums import IndexType
+from sedona.core.enums import JoinBuildSide
+from sedona.core.spatialOperator import JoinQuery
+from sedona.sql.utils import Adapter
+from sedona.utils import SedonaKryoRegistrator, KryoSerializer
+
+# Convert DataFrames to Spatial DataFrames by defining geometries
+from sedona.sql.types import GeometryType
+from pyspark.sql.functions import lit
+
+# Assuming 'ais_lat' and 'ais_lon' are the latitude and longitude columns in your AIS data
+cleaned_ais_data.createOrReplaceTempView("ais")
+ports_data.createOrReplaceTempView("ports")
+
+cleaned_ais_df = sqlContext.sql("""
+SELECT *, st_point(cast(ais_lon as Decimal(24,20)), cast(ais_lat as Decimal(24,20))) as ais_geom 
+FROM ais
+""")
+
+ports_df = sqlContext.sql("""
+SELECT *, st_point(cast(port_lon as Decimal(24,20)), cast(port_lat as Decimal(24,20))) as port_geom 
+FROM ports
+""")
+
+# Now you can use Sedona functions to perform spatial joins, range queries, etc.
+# For example, to find the nearest port for each AIS record:
+ais_with_nearest_port = Adapter.toDf(
+    JoinQuery.DistanceJoinQueryFlat(cleaned_ais_df, ports_df, False, True),
+    sqlContext
+).selectExpr("leftgeometry as ais_geom", "rightgeometry as port_geom", "distance")
+
+# Note: This is a basic example. You'll need to adjust field selections and operations according to your exact needs.
+
+from pyspark.sql.window import Window
+from pyspark.sql.functions import rank, col
+
+# Assuming ais_with_nearest_port is the resulting DataFrame from the spatial join
+# and it includes 'ais_id', 'port_id', and 'distance' columns among others
+
+# Define a window specification to partition data by AIS record and order by distance
+windowSpec = Window.partitionBy("ais_id").orderBy("distance")
+
+# Apply the rank function within each partition (i.e., each AIS record's set of joined ports)
+ranked_ports = ais_with_nearest_port.withColumn("rank", rank().over(windowSpec))
+
+# Filter to keep only the top-ranked (nearest) port for each AIS record
+nearest_ports = ranked_ports.filter(col("rank") == 1).drop("rank")
+
+# nearest_ports now contains only the nearest port for each AIS record
+
+
+
+
+
+
+----------------------------------
+
 
 from sklearn.metrics import accuracy_score, f1_score
 import numpy as np
