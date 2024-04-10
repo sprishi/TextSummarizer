@@ -1,3 +1,37 @@
+
+def process_batch(ais_batch, ports_data):
+    # Cross join - simple implementation for demonstration
+    joined = ais_batch.assign(key=1).merge(ports_data.assign(key=1), on='key').drop('key', 1)
+    
+    # Calculate distances
+    joined['distance'] = joined.apply(lambda row: haversine(row['ais_lon'], row['ais_lat'], row['port_lon'], row['port_lat']), axis=1)
+    
+    # Keep only the closest port for each AIS record
+    closest = joined.loc[joined.groupby('ais_id')['distance'].idxmin()]
+    
+    return closest
+
+def process_in_batches(ais_data, ports_data, batch_size=1000):
+    # Splitting AIS data into batches
+    batches = [ais_data.iloc[i:i + batch_size] for i in range(0, ais_data.shape[0], batch_size)]
+    
+    results = []
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        futures = [executor.submit(process_batch, batch, ports_data) for batch in batches]
+        for future in as_completed(futures):
+            results.append(future.result())
+    
+    # Combine results from all batches
+    final_result = pd.concat(results, ignore_index=True)
+    return final_result
+
+# Assuming ais_data and ports_data are already loaded
+# final_result_df = process_in_batches(ais_data, ports_data)
+
+
+
+-------------------
+
 Sure, I'll provide you with the complete implementation of the `segment_trajectories` function and an optimized code for training the model efficiently on large datasets using PySpark.
 
 First, let's define the `segment_trajectories` function:
