@@ -1,4 +1,3 @@
-
 import pandas as pd
 
 # Assuming your DataFrame is called 'df'
@@ -7,11 +6,12 @@ import pandas as pd
 # Get the list of unique regions
 regions = df['Load_Region'].unique()
 
-# Create a MultiIndex for the columns
-columns = pd.MultiIndex.from_product([['Count', 'Hit', 'Fail'], regions], names=['Metric', 'Region'])
+# Create a MultiIndex for the rows
+row_index = pd.MultiIndex.from_product([['Total', 'Hit', 'Fail'], df['Model_Date'].unique()], names=['Metric', None])
 
 # Create a new DataFrame with the desired structure
-result = pd.DataFrame(columns=columns)
+result = pd.DataFrame(index=row_index, columns=['Model_Date'] + ['Count'] + list(regions))
+result = result.sort_index(level=1, ascending=False)  # Sort rows by Model_Date in descending order
 
 # Group the data by Model_Date and Load_Region
 grouped = df.groupby(['Model_Date', 'Load_Region'])
@@ -22,15 +22,20 @@ for (model_date, region), group in grouped:
     hit_count = (group['Hit_Fail_Status'] == 'Hit').sum()
     fail_count = (group['Hit_Fail_Status'] == 'Fail').sum()
     
-    result.loc[model_date, ('Count', region)] = total_count
-    result.loc[model_date, ('Hit', region)] = hit_count
-    result.loc[model_date, ('Fail', region)] = fail_count
-
-# Sort the rows by Model_Date in descending order
-result = result.sort_index(level=0, ascending=False)
+    result.loc[('Total', model_date), 'Model_Date'] = model_date
+    result.loc[('Hit', model_date), 'Model_Date'] = model_date
+    result.loc[('Fail', model_date), 'Model_Date'] = model_date
+    
+    result.loc[('Total', model_date), 'Count'] = 'Total'
+    result.loc[('Hit', model_date), 'Count'] = 'Hit'
+    result.loc[('Fail', model_date), 'Count'] = 'Fail'
+    
+    result.loc[('Total', model_date), region] = total_count
+    result.loc[('Hit', model_date), region] = hit_count
+    result.loc[('Fail', model_date), region] = fail_count
 
 # Sort the columns by the Total count in descending order
-result = result.reindex(sorted(result.columns.levels[1], key=lambda x: result.loc[:, ('Count', x)].sum(), reverse=True), level=1, axis=1)
+result = result.reindex(sorted(result.columns[2:], key=lambda x: result.loc[('Total'), x].sum(), reverse=True), level=0, axis=1)
 
 print(result)
 
