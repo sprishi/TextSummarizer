@@ -1,4 +1,71 @@
 
+import pandas as pd
+import math
+from shapely.geometry import Point, Polygon
+
+# Define your polygon points
+polygon_points = [(lat1, lon1), (lat2, lon2), (lat3, lon3), (lat4, lon4)]
+polygon = Polygon(polygon_points)
+
+# Sample DataFrame
+data = {
+    'IMO': ['vessel1', 'vessel1', 'vessel1', 'vessel2', 'vessel2'],
+    'Latitude': [lat1, lat2, lat3, lat1, lat2],
+    'Longitude': [lon1, lon2, lon3, lon1, lon2],
+    'Heading': [45, 90, 135, 180, 225]
+}
+df = pd.DataFrame(data)
+
+# Function to determine movement status
+def is_heading_towards_polygon(current_heading, polygon_centroid, current_position):
+    delta_y = polygon_centroid.y - current_position[0]
+    delta_x = polygon_centroid.x - current_position[1]
+    angle_to_polygon = math.degrees(math.atan2(delta_y, delta_x))
+    
+    # Normalize angles to the range [0, 360)
+    angle_to_polygon = angle_to_polygon % 360
+    current_heading = current_heading % 360
+    
+    # Allow for a margin of error (e.g., 15 degrees) to account for slight deviations
+    margin = 15
+    return abs(current_heading - angle_to_polygon) <= margin or abs(current_heading - angle_to_polygon) >= (360 - margin)
+
+def determine_movement_status(group, polygon):
+    history = []
+    statuses = []
+    for _, row in group.iterrows():
+        current_position = (row['Latitude'], row['Longitude'])
+        current_heading = row['Heading']
+        history.append((current_position, current_heading))
+        
+        if len(history) < 2:
+            statuses.append("Unknown")
+            continue
+
+        previous_position, previous_heading = history[-2]
+        prev_in_polygon = polygon.contains(Point(previous_position))
+        curr_in_polygon = polygon.contains(Point(current_position))
+        heading_towards_polygon = is_heading_towards_polygon(current_heading, polygon.centroid, current_position)
+
+        if not prev_in_polygon and curr_in_polygon and heading_towards_polygon:
+            statuses.append("Entering")
+        elif prev_in_polygon and not curr_in_polygon and not heading_towards_polygon:
+            statuses.append("Exiting")
+        else:
+            statuses.append("Inside" if curr_in_polygon else "Outside")
+
+    return statuses
+
+# Apply the function to each group
+df['Status'] = df.groupby('IMO').apply(lambda x: determine_movement_status(x, polygon)).explode().values
+
+# Display the DataFrame with the new Status column
+print(df)
+
+
+///////
+
+
 import math
 from shapely.geometry import Point, Polygon
 
