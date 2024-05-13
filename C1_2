@@ -1,3 +1,84 @@
+
+import math
+from shapely.geometry import Point, Polygon
+
+# Step 1: Track Vessel History with Heading
+vessel_history = {}
+
+def update_vessel_history(vessel_id, position, heading):
+    if vessel_id not in vessel_history:
+        vessel_history[vessel_id] = []
+    vessel_history[vessel_id].append((position, heading))
+    if len(vessel_history[vessel_id]) > 3:
+        vessel_history[vessel_id].pop(0)  # Keep only the last 3 positions and headings
+
+# Step 2: Calculate Movement Direction
+def is_heading_towards_polygon(current_heading, polygon_centroid, current_position):
+    # Calculate the direction from the current position to the polygon centroid
+    delta_y = polygon_centroid.y - current_position[0]
+    delta_x = polygon_centroid.x - current_position[1]
+    angle_to_polygon = math.degrees(math.atan2(delta_y, delta_x))
+    
+    # Normalize angles to the range [0, 360)
+    angle_to_polygon = angle_to_polygon % 360
+    current_heading = current_heading % 360
+    
+    # Allow for a margin of error (e.g., 15 degrees) to account for slight deviations
+    margin = 15
+    return abs(current_heading - angle_to_polygon) <= margin or abs(current_heading - angle_to_polygon) >= (360 - margin)
+
+# Step 3: Determine Entering or Exiting with Heading
+def is_entering_or_exiting(vessel_id, current_position, current_heading, polygon):
+    if vessel_id not in vessel_history:
+        return "Unknown"
+
+    history = vessel_history[vessel_id]
+    if len(history) < 2:
+        return "Unknown"
+
+    previous_position, previous_heading = history[-2]
+    prev_in_polygon = polygon.contains(Point(previous_position))
+    curr_in_polygon = polygon.contains(Point(current_position))
+
+    heading_towards_polygon = is_heading_towards_polygon(current_heading, polygon.centroid, current_position)
+
+    if not prev_in_polygon and curr_in_polygon and heading_towards_polygon:
+        return "Entering"
+    elif prev_in_polygon and not curr_in_polygon and not heading_towards_polygon:
+        return "Exiting"
+
+    return "Inside" if curr_in_polygon else "Outside"
+
+# Step 4: Update Your Alert Logic
+def check_vessel(vessel_id, current_position, current_heading, polygon):
+    update_vessel_history(vessel_id, current_position, current_heading)
+    movement_status = is_entering_or_exiting(vessel_id, current_position, current_heading, polygon)
+    
+    if movement_status == "Entering":
+        send_alert(vessel_id, current_position, "Entering")
+    elif movement_status == "Exiting":
+        send_alert(vessel_id, current_position, "Exiting")
+
+def send_alert(vessel_id, position, status):
+    # Implement your alerting logic here (e.g., send an email)
+    print(f"Alert: Vessel {vessel_id} is {status} at position {position}")
+
+# Example Usage
+# Define your polygon points
+polygon_points = [(lat1, lon1), (lat2, lon2), (lat3, lon3), (lat4, lon4)]
+polygon = Polygon(polygon_points)
+
+# Update and check vessel status
+vessel_id = "vessel123"
+current_position = (lat, lon)
+current_heading = 45  # Example heading in degrees
+
+check_vessel(vessel_id, current_position, current_heading, polygon)
+
+
+
+--------------
+
 import pandas as pd
 
 # Assuming your DataFrame is called 'df'
