@@ -1,135 +1,124 @@
+# prepare_data.py
 import pandas as pd
 
-# Sample data
+# Example data loading
 data = {
-    'Date': ['2024-05-01', '2024-05-01', '2024-05-02', '2024-05-02'],
-    'Country': ['USA', 'India', 'USA', 'India'],
-    'Covid_Status': ['Positive', 'Negative', 'Positive', 'Negative']
+    'Model_Date': ['2021-01-01', '2021-01-01', '2021-01-02', '2021-01-02'],
+    'Load_Region': ['USA', 'India', 'USA', 'India'],
+    'Hit_Fail_Status': ['Positive', 'Negative', 'Positive', 'Negative']
 }
-
 df = pd.DataFrame(data)
 
-# Ensure Date is a datetime type
-df['Date'] = pd.to_datetime(df['Date'])
+# Convert Model_Date column to datetime
+df['Model_Date'] = pd.to_datetime(df['Model_Date'])
 
 # Aggregate data
-agg_data = df.groupby(['Date', 'Country', 'Covid_Status']).size().unstack(fill_value=0).reset_index()
+agg_data = df.groupby(['Model_Date', 'Load_Region', 'Hit_Fail_Status']).size().unstack(fill_value=0).reset_index()
 
-# Create Total count
-agg_data['Total'] = agg_data['Positive'] + agg_data['Negative']
+# Calculate Total counts
+agg_data['Total'] = agg_data['Negative'] + agg_data['Positive']
 
-# Pivot table to get the desired format
-pivot_df = agg_data.pivot(index='Date', columns='Country', values=['Total', 'Positive', 'Negative'])
-pivot_df.columns = ['_'.join(col).strip() for col in pivot_df.columns.values]
-pivot_df = pivot_df.reset_index()
+# Pivot table for Bokeh
+pivot_data = agg_data.pivot_table(index='Model_Date', columns='Load_Region', values=['Total', 'Positive', 'Negative'], fill_value=0)
+pivot_data = pivot_data.sort_index(ascending=False)
 
-# Add Total till date row
-total_row = pivot_df.sum(numeric_only=True)
-total_row['Date'] = 'Total till date'
-pivot_df = pd.concat([total_row.to_frame().T, pivot_df], ignore_index=True)
+# Add summary row
+summary_row = pivot_data.sum().to_frame().T
+summary_row.index = ['Total till date']
+pivot_data = pd.concat([summary_row, pivot_data])
 
-# Sorting by Date
-pivot_df['Date'] = pd.to_datetime(pivot_df['Date'], errors='coerce')
-pivot_df = pivot_df.sort_values(by='Date', ascending=False)
-pivot_df['Date'] = pivot_df['Date'].dt.strftime('%Y-%m-%d')
+pivot_data = pivot_data.stack(level=1).reset_index().rename(columns={'level_1': 'Metric'})
 
-# Sort columns by total sum
-columns = pivot_df.columns[1:]
-total_sums = pivot_df.iloc[0, 1:].sort_values(ascending=False).index
-sorted_columns = ['Date'] + list(total_sums)
+# Save to CSV
+pivot_data.to_csv('pivot_data.csv', index=False)
 
-pivot_df = pivot_df[sorted_columns]
 
 
 
 ---------
 
-import dataiku
+# bokeh_app.py
 import pandas as pd
-from bokeh.io import curdoc
-from bokeh.layouts import column
-from bokeh.models import ColumnDataSource, DataTable, TableColumn, Select, Div
-from bokeh.layouts import widgetbox
+from bokeh.io import output_file, show
+from bokeh.layouts import column, widgetbox
+from bokeh.models import ColumnDataSource, DataTable, TableColumn, DateFormatter, NumberFormatter, CheckboxGroup, DateRangeSlider, CustomJS
+from bokeh.plotting import curdoc
 
-# Read the DataFrame from the Dataiku dataset
-dataset = dataiku.Dataset("pivot_df")  # Replace "pivot_df" with your dataset name
-pivot_df = dataset.get_dataframe()
+# Load the prepared data
+pivot_data = pd.read_csv('pivot_data.csv')
 
-# Sort columns by total sum value
-metric_cols = pivot_df.columns[1:]
-total_sums = pivot_df[metric_cols].sum().sort_values(ascending=False).index
-sorted_columns = ['Date'] + list(total_sums)
+# Convert Model_Date column to datetime
+pivot_data['Model_Date'] = pd.to_datetime(pivot_data['Model_Date'])
 
-pivot_df = pivot_df[sorted_columns]
+# Prepare data for Bokeh
+source = ColumnDataSource(pivot_data)
 
-# Ensure 'Date' is a string type for correct sorting
-pivot_df['Date'] = pivot_df['Date'].astype(str)
+# Define columns for the DataTable
+columns = [
+    TableColumn(field="Model_Date", title="Model_Date", formatter=DateFormatter(format="%Y-%m-%d")),
+    TableColumn(field="Metric", title="Metric"),
+]
 
-# Convert DataFrame to ColumnDataSource
-source = ColumnDataSource(pivot_df)
+# Dynamically add Load_Region columns
+for region in pivot_data.columns[2:]:
+    columns.append(TableColumn(field=region, title=region, formatter=NumberFormatter(format="0")))
 
-# Generate dynamic columns
-columns = [TableColumn(field="Date", title="Date")]
-for col in sorted_columns[1:]:
-    field_name = col.replace('_', ' ')
-    columns.append(TableColumn(field=col, title=field_name))
+data_table = DataTable(source=source, columns=columns, width=800)
 
-# Create DataTable
-data_table = DataTable(source=source, columns=columns, width=800, height=280)
+# Create filter widgets
+date_range_slider = DateRangeSlider(title="Date Range", start=pivot_data['Model_Date'].min(), end=pivot_data['Model_Date'].max(), value=(pivot_data['Model_Date'].min(), pivot_data['Model_Date'].max()))
+region_filter = CheckboxGroup(labels=list(pivot_data.columns[2:]), active=list(range(len(pivot_data.columns[2:]))))
 
-# Filters
-countries = sorted(set([col.split('_')[1] for col in pivot_df.columns if '_' in col]))
-dates = sorted(pivot_df['Date'].unique())
+# CustomJS for filtering
+callback = CustomJS(args=dict(source=source, date_range=date_range_slider, region_filter=region_filter), code="""
+    const data = source.data;
+    const date_start = new Date(date_range.value[0]);
+    const date_end = new Date(date_range.value[1]);
+    const regions = region_filter.active.map(i => region_filter.labels[i]);
 
-country_select = Select(title="Country", value="All", options=["All"] + countries)
-date_select = Select(title="Date", value="All", options=["All"] + dates)
+    // Filter logic
+    const filtered_data = {
+        Model_Date: [], Metric: []
+    };
 
-# Filter callback
-def update():
-    selected_country = country_select.value
-    selected_date = date_select.value
-    
-    filtered_df = pivot_df.copy()
-    
-    if selected_country != "All":
-        filtered_df = filtered_df[['Date'] + [col for col in filtered_df.columns if selected_country in col or col == 'Date']]
-    
-    if selected_date != "All":
-        filtered_df = filtered_df[filtered_df['Date'] == selected_date]
-    
-    source.data = ColumnDataSource(filtered_df).data
+    for (let region of regions) {
+        filtered_data[region] = [];
+    }
 
-country_select.on_change('value', lambda attr, old, new: update())
-date_select.on_change('value', lambda attr, old, new: update())
+    for (let i = 0; i < data['Model_Date'].length; i++) {
+        const date = new Date(data['Model_Date'][i]);
+        if (date >= date_start && date <= date_end) {
+            filtered_data['Model_Date'].push(data['Model_Date'][i]);
+            filtered_data['Metric'].push(data['Metric'][i]);
+            for (let region of regions) {
+                filtered_data[region].push(data[region][i]);
+            }
+        }
+    }
 
-# Create HTML table for advanced formatting
-def format_dataframe(df):
-    html = '<table border="1"><thead><tr>'
-    html += '<th>Date</th><th></th>'
-    for col in df.columns[1:]:
-        html += f'<th>{col.replace("_", " ")}</th>'
-    html += '</tr></thead><tbody>'
-    
-    for _, row in df.iterrows():
-        html += '<tr>'
-        html += f'<td rowspan="3">{row["Date"]}</td>'
-        for metric in ['Total', 'Positive', 'Negative']:
-            html += f'<td>{metric}</td>'
-            for col in df.columns[1:]:
-                html += f'<td>{row[col]}</td>'
-            html += '</tr>'
-            if metric != 'Negative':
-                html += '<tr>'
-    html += '</tbody></table>'
-    return html
+    for (let key in data) {
+        if (filtered_data.hasOwnProperty(key)) {
+            data[key] = filtered_data[key];
+        } else {
+            data[key] = [];
+        }
+    }
+    source.change.emit();
+""")
 
-# Create HTML table
-html_table = Div(text=format_dataframe(pivot_df), width=800)
+date_range_slider.js_on_change('value', callback)
+region_filter.js_on_change('active', callback)
 
-# Layout
-layout = column(widgetbox(country_select, date_select), html_table)
+# Layout with filters
+layout = column(widgetbox(date_range_slider, region_filter, data_table))
 
+# Add to the current document (for live updates)
 curdoc().add_root(layout)
+
+# If running as a script
+output_file("bokeh_table_with_filters.html")
+show(layout)
+
 
 
 
