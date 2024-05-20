@@ -9,6 +9,9 @@ data = {
 
 df = pd.DataFrame(data)
 
+# Ensure Date is a datetime type
+df['Date'] = pd.to_datetime(df['Date'])
+
 # Aggregate data
 agg_data = df.groupby(['Date', 'Country', 'Covid_Status']).size().unstack(fill_value=0).reset_index()
 
@@ -25,8 +28,17 @@ total_row = pivot_df.sum(numeric_only=True)
 total_row['Date'] = 'Total till date'
 pivot_df = pd.concat([total_row.to_frame().T, pivot_df], ignore_index=True)
 
-# Sorting
+# Sorting by Date
+pivot_df['Date'] = pd.to_datetime(pivot_df['Date'], errors='coerce')
 pivot_df = pivot_df.sort_values(by='Date', ascending=False)
+pivot_df['Date'] = pivot_df['Date'].dt.strftime('%Y-%m-%d')
+
+# Sort columns by total sum
+columns = pivot_df.columns[1:]
+total_sums = pivot_df.iloc[0, 1:].sort_values(ascending=False).index
+sorted_columns = ['Date'] + list(total_sums)
+
+pivot_df = pivot_df[sorted_columns]
 
 
 
@@ -40,20 +52,18 @@ from bokeh.layouts import widgetbox
 # Convert DataFrame to ColumnDataSource
 source = ColumnDataSource(pivot_df)
 
-# Define columns
-columns = [TableColumn(field="Date", title="Date", formatter=DateFormatter()),
-           TableColumn(field="Total_USA", title="Total USA"),
-           TableColumn(field="Positive_USA", title="Positive USA"),
-           TableColumn(field="Negative_USA", title="Negative USA"),
-           TableColumn(field="Total_India", title="Total India"),
-           TableColumn(field="Positive_India", title="Positive India"),
-           TableColumn(field="Negative_India", title="Negative India")]
+# Generate dynamic columns
+columns = [TableColumn(field="Date", title="Date")]
+for col in pivot_df.columns[1:]:
+    col_split = col.split('_')
+    field_name = col.replace('_', ' ')
+    columns.append(TableColumn(field=col, title=field_name))
 
 # Create DataTable
 data_table = DataTable(source=source, columns=columns, width=800, height=280)
 
 # Filters
-countries = ['USA', 'India']
+countries = sorted(set([col.split('_')[1] for col in pivot_df.columns if '_' in col]))
 dates = sorted(pivot_df['Date'].unique())
 
 country_select = Select(title="Country", value="All", options=["All"] + countries)
@@ -67,7 +77,7 @@ def update():
     filtered_df = pivot_df.copy()
     
     if selected_country != "All":
-        filtered_df = filtered_df[[col for col in filtered_df.columns if selected_country in col or col == 'Date']]
+        filtered_df = filtered_df[['Date'] + [col for col in filtered_df.columns if selected_country in col or col == 'Date']]
     
     if selected_date != "All":
         filtered_df = filtered_df[filtered_df['Date'] == selected_date]
@@ -81,6 +91,7 @@ date_select.on_change('value', lambda attr, old, new: update())
 layout = column(widgetbox(country_select, date_select), data_table)
 
 curdoc().add_root(layout)
+
 
 
 
