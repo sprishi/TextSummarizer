@@ -46,7 +46,7 @@ pivot_df = pivot_df[sorted_columns]
 
 from bokeh.io import curdoc
 from bokeh.layouts import column
-from bokeh.models import ColumnDataSource, DataTable, TableColumn, DateFormatter, Select
+from bokeh.models import ColumnDataSource, DataTable, TableColumn, DateFormatter, Select, Div
 from bokeh.layouts import widgetbox
 
 # Convert DataFrame to ColumnDataSource
@@ -54,8 +54,7 @@ source = ColumnDataSource(pivot_df)
 
 # Generate dynamic columns
 columns = [TableColumn(field="Date", title="Date")]
-for col in pivot_df.columns[1:]:
-    col_split = col.split('_')
+for col in sorted_columns[1:]:
     field_name = col.replace('_', ' ')
     columns.append(TableColumn(field=col, title=field_name))
 
@@ -91,6 +90,7 @@ date_select.on_change('value', lambda attr, old, new: update())
 layout = column(widgetbox(country_select, date_select), data_table)
 
 curdoc().add_root(layout)
+
 
 
 
