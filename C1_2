@@ -1,3 +1,92 @@
+import pandas as pd
+
+# Sample data
+data = {
+    'Date': ['2024-05-01', '2024-05-01', '2024-05-02', '2024-05-02'],
+    'Country': ['USA', 'India', 'USA', 'India'],
+    'Covid_Status': ['Positive', 'Negative', 'Positive', 'Negative']
+}
+
+df = pd.DataFrame(data)
+
+# Aggregate data
+agg_data = df.groupby(['Date', 'Country', 'Covid_Status']).size().unstack(fill_value=0).reset_index()
+
+# Create Total count
+agg_data['Total'] = agg_data['Positive'] + agg_data['Negative']
+
+# Pivot table to get the desired format
+pivot_df = agg_data.pivot(index='Date', columns='Country', values=['Total', 'Positive', 'Negative'])
+pivot_df.columns = ['_'.join(col).strip() for col in pivot_df.columns.values]
+pivot_df = pivot_df.reset_index()
+
+# Add Total till date row
+total_row = pivot_df.sum(numeric_only=True)
+total_row['Date'] = 'Total till date'
+pivot_df = pd.concat([total_row.to_frame().T, pivot_df], ignore_index=True)
+
+# Sorting
+pivot_df = pivot_df.sort_values(by='Date', ascending=False)
+
+
+
+---------
+
+from bokeh.io import curdoc
+from bokeh.layouts import column
+from bokeh.models import ColumnDataSource, DataTable, TableColumn, DateFormatter, Select
+from bokeh.layouts import widgetbox
+
+# Convert DataFrame to ColumnDataSource
+source = ColumnDataSource(pivot_df)
+
+# Define columns
+columns = [TableColumn(field="Date", title="Date", formatter=DateFormatter()),
+           TableColumn(field="Total_USA", title="Total USA"),
+           TableColumn(field="Positive_USA", title="Positive USA"),
+           TableColumn(field="Negative_USA", title="Negative USA"),
+           TableColumn(field="Total_India", title="Total India"),
+           TableColumn(field="Positive_India", title="Positive India"),
+           TableColumn(field="Negative_India", title="Negative India")]
+
+# Create DataTable
+data_table = DataTable(source=source, columns=columns, width=800, height=280)
+
+# Filters
+countries = ['USA', 'India']
+dates = sorted(pivot_df['Date'].unique())
+
+country_select = Select(title="Country", value="All", options=["All"] + countries)
+date_select = Select(title="Date", value="All", options=["All"] + dates)
+
+# Filter callback
+def update():
+    selected_country = country_select.value
+    selected_date = date_select.value
+    
+    filtered_df = pivot_df.copy()
+    
+    if selected_country != "All":
+        filtered_df = filtered_df[[col for col in filtered_df.columns if selected_country in col or col == 'Date']]
+    
+    if selected_date != "All":
+        filtered_df = filtered_df[filtered_df['Date'] == selected_date]
+    
+    source.data = ColumnDataSource(filtered_df).data
+
+country_select.on_change('value', lambda attr, old, new: update())
+date_select.on_change('value', lambda attr, old, new: update())
+
+# Layout
+layout = column(widgetbox(country_select, date_select), data_table)
+
+curdoc().add_root(layout)
+
+
+
+---------
+
+---------
 
 import pandas as pd
 import math
