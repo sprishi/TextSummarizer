@@ -44,10 +44,26 @@ pivot_df = pivot_df[sorted_columns]
 
 ---------
 
+import dataiku
+import pandas as pd
 from bokeh.io import curdoc
 from bokeh.layouts import column
-from bokeh.models import ColumnDataSource, DataTable, TableColumn, DateFormatter, Select, Div
+from bokeh.models import ColumnDataSource, DataTable, TableColumn, Select, Div
 from bokeh.layouts import widgetbox
+
+# Read the DataFrame from the Dataiku dataset
+dataset = dataiku.Dataset("pivot_df")  # Replace "pivot_df" with your dataset name
+pivot_df = dataset.get_dataframe()
+
+# Sort columns by total sum value
+metric_cols = pivot_df.columns[1:]
+total_sums = pivot_df[metric_cols].sum().sort_values(ascending=False).index
+sorted_columns = ['Date'] + list(total_sums)
+
+pivot_df = pivot_df[sorted_columns]
+
+# Ensure 'Date' is a string type for correct sorting
+pivot_df['Date'] = pivot_df['Date'].astype(str)
 
 # Convert DataFrame to ColumnDataSource
 source = ColumnDataSource(pivot_df)
@@ -86,10 +102,35 @@ def update():
 country_select.on_change('value', lambda attr, old, new: update())
 date_select.on_change('value', lambda attr, old, new: update())
 
+# Create HTML table for advanced formatting
+def format_dataframe(df):
+    html = '<table border="1"><thead><tr>'
+    html += '<th>Date</th><th></th>'
+    for col in df.columns[1:]:
+        html += f'<th>{col.replace("_", " ")}</th>'
+    html += '</tr></thead><tbody>'
+    
+    for _, row in df.iterrows():
+        html += '<tr>'
+        html += f'<td rowspan="3">{row["Date"]}</td>'
+        for metric in ['Total', 'Positive', 'Negative']:
+            html += f'<td>{metric}</td>'
+            for col in df.columns[1:]:
+                html += f'<td>{row[col]}</td>'
+            html += '</tr>'
+            if metric != 'Negative':
+                html += '<tr>'
+    html += '</tbody></table>'
+    return html
+
+# Create HTML table
+html_table = Div(text=format_dataframe(pivot_df), width=800)
+
 # Layout
-layout = column(widgetbox(country_select, date_select), data_table)
+layout = column(widgetbox(country_select, date_select), html_table)
 
 curdoc().add_root(layout)
+
 
 
 
