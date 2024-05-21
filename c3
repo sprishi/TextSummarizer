@@ -59,10 +59,11 @@ with tab1:
     else:
         filtered_df1 = df1
     
-    st.markdown(create_custom_table(filtered_df1), unsafe_allow_html=True)
+    st.markdown(create_custom_table(filtered_df1.reset_index(drop=True)), unsafe_allow_html=True)
 
 with tab2:
-    st.dataframe(df2, use_container_width=True)
+    st.dataframe(df2.reset_index(drop=True), use_container_width=True)
+
 
 
 
