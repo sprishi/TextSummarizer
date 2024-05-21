@@ -1,3 +1,73 @@
+import streamlit as st
+import pandas as pd
+import dataiku
+
+# Fetch the datasets
+df1 = dataiku.Dataset("df1").get_dataframe().fillna('')
+df2 = dataiku.Dataset("df2").get_dataframe().fillna('')
+
+# Extract column names for filtering
+filter_columns = df1.columns[2:]
+
+# Function to convert numeric columns to integers
+def convert_to_int(df):
+    for col in df.select_dtypes(include=['float64']).columns:
+        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
+    return df
+
+# Convert relevant columns in df1 and df2 to integers
+df1 = convert_to_int(df1)
+df2 = convert_to_int(df2)
+
+# Function to create a custom HTML table with merged cells
+def create_custom_table(df):
+    # Create an empty list to store rows
+    rows = []
+    for i, row in df.iterrows():
+        # If the date is the same as the previous row, set it to an empty string
+        if i > 0 and df.iloc[i, 0] == df.iloc[i-1, 0]:
+            row[0] = ''
+        rows.append(row)
+
+    # Create HTML for the table
+    html = '<table border="1" width="100%">'
+    html += '<thead><tr>' + ''.join([f'<th>{col}</th>' for col in df.columns]) + '</tr></thead>'
+    html += '<tbody>'
+    for row in rows:
+        html += '<tr>' + ''.join([f'<td>{value}</td>' for value in row]) + '</tr>'
+    html += '</tbody></table>'
+    
+    return html
+
+# Set page configuration for wider layout
+st.set_page_config(layout="wide")
+
+# App layout
+st.title("Data Viewer")
+
+tab1, tab2 = st.tabs(["Model Hit/Fail Metric", "Marcopolo Metric"])
+
+with tab1:
+    selected_columns = st.multiselect(
+        "Select columns to display",
+        options=filter_columns,
+        default=list(filter_columns)
+    )
+
+    if selected_columns:
+        filtered_df1 = df1[[df1.columns[0]] + selected_columns]
+    else:
+        filtered_df1 = df1
+    
+    st.markdown(create_custom_table(filtered_df1), unsafe_allow_html=True)
+
+with tab2:
+    st.dataframe(df2, use_container_width=True)
+
+
+
+==============================================
+
 import dash
 import dash_table
 import dash_core_components as dcc
