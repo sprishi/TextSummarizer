@@ -1,91 +1,69 @@
 import pandas as pd
-
-# Sample data loading - replace this with actual Dataiku dataset load
-# Example: df = dataiku.Dataset("your_dataset_name").get_dataframe()
-df = pd.read_csv("your_dataset.csv")
-
-# Renaming columns
-df.rename(columns={
-    'Date': 'Model_Date',
-    'Country': 'Load_Region',
-    'Covid Positive or Negative': 'Hit_Fail_Status'
-}, inplace=True)
-
-# Aggregating counts by date and country
-df['Total'] = 1
-summary = df.groupby(['Model_Date', 'Load_Region', 'Hit_Fail_Status']).size().unstack(fill_value=0).reset_index()
-summary['Total'] = summary['Negative'] + summary['Positive']
-
-# Reshape the DataFrame to have the required structure
-result = summary.pivot(index='Model_Date', columns='Load_Region', values=['Total', 'Positive', 'Negative'])
-result.columns = ['_'.join(col).strip() for col in result.columns.values]
-result = result.reset_index()
-
-# Add the 'Total till date' row
-total_till_date = summary.groupby('Load_Region').sum().T
-total_till_date['Model_Date'] = 'Total till date'
-total_till_date = total_till_date.reset_index().rename(columns={'index': 'Hit_Fail_Status'})
-
-# Saving the prepared DataFrame in Dataiku
-# Example: prepared_df = dataiku.Dataset("prepared_dataset_name").write_with_schema(result)
-result.to_csv("prepared_data.csv", index=False)
-
-
-
-
-
----------
-
-import pandas as pd
-from bokeh.models import ColumnDataSource, DataTable, TableColumn, Dropdown, Slider
+from bokeh.io import curdoc
 from bokeh.layouts import column, row
-from bokeh.plotting import curdoc
-from bokeh.transform import factor_cmap
+from bokeh.models import ColumnDataSource, DataTable, TableColumn, DateFormatter, NumberFormatter, Select, DateRangeSlider
+from dataiku import Dataset
 
-# Load the prepared data
-df = pd.read_csv("prepared_data.csv")
+# Read the prepared data from Dataiku
+data = Dataset("Prepared_Data").get_dataframe()
 
-# Convert DataFrame to ColumnDataSource
-source = ColumnDataSource(df)
+# Create the ColumnDataSource
+source = ColumnDataSource(data)
 
 # Define the columns for the DataTable
 columns = [
-    TableColumn(field="Model_Date", title="Model_Date"),
-    TableColumn(field="Total", title="Total"),
-    TableColumn(field="Positive", title="Positive"),
-    TableColumn(field="Negative", title="Negative")
+    TableColumn(field="Model_Date", title="Date", formatter=DateFormatter(), sortable=False),
+    TableColumn(field="Load_Region", title="Country", sortable=False),
+    TableColumn(field="Total", title="Total", formatter=NumberFormatter(), sortable=False),
+    TableColumn(field="Positive", title="Positive", formatter=NumberFormatter(), sortable=False),
+    TableColumn(field="Negative", title="Negative", formatter=NumberFormatter(), sortable=False)
 ]
 
-# Additional columns for each country
-countries = [col.split('_')[1] for col in df.columns if '_' in col]
-for country in set(countries):
-    columns.append(TableColumn(field=f"Total_{country}", title=f"Total {country}"))
-    columns.append(TableColumn(field=f"Positive_{country}", title=f"Positive {country}"))
-    columns.append(TableColumn(field=f"Negative_{country}", title=f"Negative {country}"))
+# Create the DataTable
+data_table = DataTable(source=source, columns=columns, width=1200, height=500)
 
-# Create DataTable
-data_table = DataTable(source=source, columns=columns, width=1000, height=800)
+# Create the country filter
+countries = sorted(data["Load_Region"].unique())
+country_filter = Select(title="Country Filter", value="All", options=["All"] + countries)
 
-# Filter features
-country_filter = Dropdown(label="Select Country", menu=countries)
-date_slider = Slider(start=1, end=len(df), value=1, step=1, title="Select Date Range")
+# Create the date range slider
+date_range_slider = DateRangeSlider(
+    title="Date Range",
+    value=(data["Model_Date"].min(), data["Model_Date"].max()),
+    start=data["Model_Date"].min(),
+    end=data["Model_Date"].max()
+)
 
-# Filter callback
-def update():
+# Update the data source based on filter selections
+def update_source():
+    view = source.data
+
+    # Filter by country
     selected_country = country_filter.value
-    date_range = date_slider.value
-    filtered_df = df[(df['Model_Date'] <= date_range) & (df['Load_Region'] == selected_country)]
-    source.data = ColumnDataSource(filtered_df).data
+    if selected_country != "All":
+        view = view[view["Load_Region"] == selected_country]
 
-country_filter.on_change('value', lambda attr, old, new: update())
-date_slider.on_change('value', lambda attr, old, new: update())
+    # Filter by date range
+    date_range = date_range_slider.value
+    view = view[
+        (view["Model_Date"] >= date_range[0]) & (view["Model_Date"] <= date_range[1])
+    ]
 
-# Layout
-layout = column(row(country_filter, date_slider), data_table)
+    source.data = view
 
-# Add to document
+# Add callbacks to update the data source
+country_filter.on_change("value", lambda attr, old, new: update_source())
+date_range_slider.on_change("value", lambda attr, old, new: update_source())
+
+# Create the layout
+layout = column(
+    row(country_filter, date_range_slider),
+    data_table
+)
+
+# Add the layout to the Bokeh document
 curdoc().add_root(layout)
-curdoc().title = "Covid-19 Data Visualization"
+curdoc().title = "COVID-19 Data Visualization"
 
 
 
