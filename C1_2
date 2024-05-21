@@ -1,23 +1,34 @@
 import pandas as pd
 
-# Load the data from Dataiku
-df = pd.read_csv('path_to_your_dataframe.csv')
+# Sample data loading - replace this with actual Dataiku dataset load
+# Example: df = dataiku.Dataset("your_dataset_name").get_dataframe()
+df = pd.read_csv("your_dataset.csv")
 
-# Rename columns
+# Renaming columns
 df.rename(columns={
     'Date': 'Model_Date',
     'Country': 'Load_Region',
     'Covid Positive or Negative': 'Hit_Fail_Status'
 }, inplace=True)
 
-# Aggregate data
-agg_df = df.groupby(['Model_Date', 'Load_Region', 'Hit_Fail_Status']).size().unstack(fill_value=0).reset_index()
+# Aggregating counts by date and country
+df['Total'] = 1
+summary = df.groupby(['Model_Date', 'Load_Region', 'Hit_Fail_Status']).size().unstack(fill_value=0).reset_index()
+summary['Total'] = summary['Negative'] + summary['Positive']
 
-# Calculate Total counts
-agg_df['Total'] = agg_df['Positive'] + agg_df['Negative']
+# Reshape the DataFrame to have the required structure
+result = summary.pivot(index='Model_Date', columns='Load_Region', values=['Total', 'Positive', 'Negative'])
+result.columns = ['_'.join(col).strip() for col in result.columns.values]
+result = result.reset_index()
 
-# Save the aggregated data back to Dataiku
-agg_df.to_csv('aggregated_data.csv', index=False)
+# Add the 'Total till date' row
+total_till_date = summary.groupby('Load_Region').sum().T
+total_till_date['Model_Date'] = 'Total till date'
+total_till_date = total_till_date.reset_index().rename(columns={'index': 'Hit_Fail_Status'})
+
+# Saving the prepared DataFrame in Dataiku
+# Example: prepared_df = dataiku.Dataset("prepared_dataset_name").write_with_schema(result)
+result.to_csv("prepared_data.csv", index=False)
 
 
 
@@ -25,56 +36,57 @@ agg_df.to_csv('aggregated_data.csv', index=False)
 
 ---------
 
-from bokeh.io import curdoc
-from bokeh.models import ColumnDataSource, DataTable, TableColumn, DateFormatter, Dropdown, Slider
-from bokeh.layouts import layout, widgetbox
-from bokeh.plotting import figure
 import pandas as pd
+from bokeh.models import ColumnDataSource, DataTable, TableColumn, Dropdown, Slider
+from bokeh.layouts import column, row
+from bokeh.plotting import curdoc
+from bokeh.transform import factor_cmap
 
-# Load the aggregated data
-agg_df = pd.read_csv('path_to_your_aggregated_dataframe.csv')
+# Load the prepared data
+df = pd.read_csv("prepared_data.csv")
 
-# Create a ColumnDataSource from the DataFrame
-source = ColumnDataSource(agg_df)
+# Convert DataFrame to ColumnDataSource
+source = ColumnDataSource(df)
 
-# Create DataTable columns
+# Define the columns for the DataTable
 columns = [
-    TableColumn(field="Model_Date", title="Model_Date", formatter=DateFormatter()),
-    TableColumn(field="Load_Region", title="Load_Region"),
+    TableColumn(field="Model_Date", title="Model_Date"),
     TableColumn(field="Total", title="Total"),
     TableColumn(field="Positive", title="Positive"),
     TableColumn(field="Negative", title="Negative")
 ]
 
-# Create a DataTable
-data_table = DataTable(source=source, columns=columns, width=800, height=280)
+# Additional columns for each country
+countries = [col.split('_')[1] for col in df.columns if '_' in col]
+for country in set(countries):
+    columns.append(TableColumn(field=f"Total_{country}", title=f"Total {country}"))
+    columns.append(TableColumn(field=f"Positive_{country}", title=f"Positive {country}"))
+    columns.append(TableColumn(field=f"Negative_{country}", title=f"Negative {country}"))
 
-# Create a dropdown filter for countries
-country_options = [(region, region) for region in agg_df['Load_Region'].unique()]
-dropdown = Dropdown(label="Select Country", button_type="warning", menu=country_options)
+# Create DataTable
+data_table = DataTable(source=source, columns=columns, width=1000, height=800)
 
-# Create a date slider filter
-date_slider = Slider(title="Date Range", start=agg_df['Model_Date'].min(), end=agg_df['Model_Date'].max(), step=1)
+# Filter features
+country_filter = Dropdown(label="Select Country", menu=countries)
+date_slider = Slider(start=1, end=len(df), value=1, step=1, title="Select Date Range")
 
-# Define callback function for filtering
+# Filter callback
 def update():
-    selected_country = dropdown.value
-    selected_date = date_slider.value
+    selected_country = country_filter.value
+    date_range = date_slider.value
+    filtered_df = df[(df['Model_Date'] <= date_range) & (df['Load_Region'] == selected_country)]
+    source.data = ColumnDataSource(filtered_df).data
 
-    filtered_df = agg_df[(agg_df['Load_Region'] == selected_country) & (agg_df['Model_Date'] <= selected_date)]
-    source.data = filtered_df
-
-dropdown.on_change('value', lambda attr, old, new: update())
+country_filter.on_change('value', lambda attr, old, new: update())
 date_slider.on_change('value', lambda attr, old, new: update())
 
-# Layout the widgets and table
-layout = layout([
-    [widgetbox(dropdown, date_slider)],
-    [data_table]
-])
+# Layout
+layout = column(row(country_filter, date_slider), data_table)
 
+# Add to document
 curdoc().add_root(layout)
 curdoc().title = "Covid-19 Data Visualization"
+
 
 
 
