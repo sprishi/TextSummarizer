@@ -7,20 +7,25 @@ from dataiku import Dataset
 # Read the prepared data from Dataiku
 data = Dataset("Prepared_Data").get_dataframe()
 
+# Reshape the data to the desired format
+reshaped_data = data.melt(id_vars=["Model_Date", "Load_Region"], value_vars=["Total", "Positive", "Negative"], var_name="Case_Type", value_name="Count")
+reshaped_data = reshaped_data.sort_values(by=["Model_Date", "Load_Region", "Case_Type"], ascending=[False, False, True])
+reshaped_data = reshaped_data.reset_index(drop=True)
+
 # Create the ColumnDataSource
-source = ColumnDataSource(data)
+source = ColumnDataSource(reshaped_data)
 
 # Define the columns for the DataTable
 columns = [
     TableColumn(field="Model_Date", title="Date", formatter=DateFormatter(), sortable=False),
-    TableColumn(field="Load_Region", title="Country", sortable=False),
-    TableColumn(field="Total", title="Total", formatter=NumberFormatter(), sortable=False),
-    TableColumn(field="Positive", title="Positive", formatter=NumberFormatter(), sortable=False),
-    TableColumn(field="Negative", title="Negative", formatter=NumberFormatter(), sortable=False)
+    TableColumn(field="Case_Type", title="", formatter=NumberFormatter(), sortable=False),
+] + [
+    TableColumn(field=country, title=country, formatter=NumberFormatter(), sortable=False)
+    for country in data["Load_Region"].unique()
 ]
 
 # Create the DataTable
-data_table = DataTable(source=source, columns=columns, width=1200, height=500)
+data_table = DataTable(source=source, columns=columns, width=1200, height=500, index_position=None)
 
 # Create the country filter
 countries = sorted(data["Load_Region"].unique())
