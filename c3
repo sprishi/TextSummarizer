@@ -1,18 +1,37 @@
-# Create a Bokeh plot
-p = figure(title="Sample Bokeh Plot", x_axis_label='X', y_axis_label='Y')
-p.line(df['x'], df['y'], legend_label='Line', line_width=2)
+import dataiku
+import pandas as pd
+from bokeh.models import ColumnDataSource, DataTable, TableColumn
+from bokeh.layouts import layout
+from bokeh.embed import components
+from bokeh.resources import INLINE
 
-script, div = components(p)
+# Load the dataset
+dataset = dataiku.Dataset("your_dataset_name")
+df = dataset.get_dataframe()
 
-# Generate the HTML to display the plot
+# Convert DataFrame to ColumnDataSource
+source = ColumnDataSource(df)
+
+# Define columns for DataTable
+columns = [TableColumn(field=col, title=col) for col in df.columns]
+
+# Create DataTable
+data_table = DataTable(source=source, columns=columns, width=800, height=280)
+
+# Layout the table
+l = layout([[data_table]])
+
+# Embed the plot in the webapp
+script, div = components(l)
+
+# Generate the HTML to display the table
 html = f"""
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <title>Dataiku Bokeh Webapp</title>
-    <link rel="stylesheet" href="https://cdn.bokeh.org/bokeh/release/bokeh-2.4.2.min.css" type="text/css" />
-    <script type="text/javascript" src="https://cdn.bokeh.org/bokeh/release/bokeh-2.4.2.min.js"></script>
+    {INLINE.render()}
 </head>
 <body>
     {div}
@@ -24,4 +43,5 @@ html = f"""
 """
 
 # Display the HTML in the webapp
-display_html(html)
+display_html(HTML)
+
