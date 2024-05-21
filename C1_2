@@ -1,123 +1,80 @@
-# prepare_data.py
 import pandas as pd
 
-# Example data loading
-data = {
-    'Model_Date': ['2021-01-01', '2021-01-01', '2021-01-02', '2021-01-02'],
-    'Load_Region': ['USA', 'India', 'USA', 'India'],
-    'Hit_Fail_Status': ['Positive', 'Negative', 'Positive', 'Negative']
-}
-df = pd.DataFrame(data)
+# Load the data from Dataiku
+df = pd.read_csv('path_to_your_dataframe.csv')
 
-# Convert Model_Date column to datetime
-df['Model_Date'] = pd.to_datetime(df['Model_Date'])
+# Rename columns
+df.rename(columns={
+    'Date': 'Model_Date',
+    'Country': 'Load_Region',
+    'Covid Positive or Negative': 'Hit_Fail_Status'
+}, inplace=True)
 
 # Aggregate data
-agg_data = df.groupby(['Model_Date', 'Load_Region', 'Hit_Fail_Status']).size().unstack(fill_value=0).reset_index()
+agg_df = df.groupby(['Model_Date', 'Load_Region', 'Hit_Fail_Status']).size().unstack(fill_value=0).reset_index()
 
 # Calculate Total counts
-agg_data['Total'] = agg_data['Negative'] + agg_data['Positive']
+agg_df['Total'] = agg_df['Positive'] + agg_df['Negative']
 
-# Pivot table for Bokeh
-pivot_data = agg_data.pivot_table(index='Model_Date', columns='Load_Region', values=['Total', 'Positive', 'Negative'], fill_value=0)
-pivot_data = pivot_data.sort_index(ascending=False)
+# Save the aggregated data back to Dataiku
+agg_df.to_csv('aggregated_data.csv', index=False)
 
-# Add summary row
-summary_row = pivot_data.sum().to_frame().T
-summary_row.index = ['Total till date']
-pivot_data = pd.concat([summary_row, pivot_data])
-
-pivot_data = pivot_data.stack(level=1).reset_index().rename(columns={'level_1': 'Metric'})
-
-# Save to CSV
-pivot_data.to_csv('pivot_data.csv', index=False)
 
 
 
 
 ---------
 
-# bokeh_app.py
+from bokeh.io import curdoc
+from bokeh.models import ColumnDataSource, DataTable, TableColumn, DateFormatter, Dropdown, Slider
+from bokeh.layouts import layout, widgetbox
+from bokeh.plotting import figure
 import pandas as pd
-from bokeh.io import output_file, show
-from bokeh.layouts import column, widgetbox
-from bokeh.models import ColumnDataSource, DataTable, TableColumn, DateFormatter, NumberFormatter, CheckboxGroup, DateRangeSlider, CustomJS
-from bokeh.plotting import curdoc
 
-# Load the prepared data
-pivot_data = pd.read_csv('pivot_data.csv')
+# Load the aggregated data
+agg_df = pd.read_csv('path_to_your_aggregated_dataframe.csv')
 
-# Convert Model_Date column to datetime
-pivot_data['Model_Date'] = pd.to_datetime(pivot_data['Model_Date'])
+# Create a ColumnDataSource from the DataFrame
+source = ColumnDataSource(agg_df)
 
-# Prepare data for Bokeh
-source = ColumnDataSource(pivot_data)
-
-# Define columns for the DataTable
+# Create DataTable columns
 columns = [
-    TableColumn(field="Model_Date", title="Model_Date", formatter=DateFormatter(format="%Y-%m-%d")),
-    TableColumn(field="Metric", title="Metric"),
+    TableColumn(field="Model_Date", title="Model_Date", formatter=DateFormatter()),
+    TableColumn(field="Load_Region", title="Load_Region"),
+    TableColumn(field="Total", title="Total"),
+    TableColumn(field="Positive", title="Positive"),
+    TableColumn(field="Negative", title="Negative")
 ]
 
-# Dynamically add Load_Region columns
-for region in pivot_data.columns[2:]:
-    columns.append(TableColumn(field=region, title=region, formatter=NumberFormatter(format="0")))
+# Create a DataTable
+data_table = DataTable(source=source, columns=columns, width=800, height=280)
 
-data_table = DataTable(source=source, columns=columns, width=800)
+# Create a dropdown filter for countries
+country_options = [(region, region) for region in agg_df['Load_Region'].unique()]
+dropdown = Dropdown(label="Select Country", button_type="warning", menu=country_options)
 
-# Create filter widgets
-date_range_slider = DateRangeSlider(title="Date Range", start=pivot_data['Model_Date'].min(), end=pivot_data['Model_Date'].max(), value=(pivot_data['Model_Date'].min(), pivot_data['Model_Date'].max()))
-region_filter = CheckboxGroup(labels=list(pivot_data.columns[2:]), active=list(range(len(pivot_data.columns[2:]))))
+# Create a date slider filter
+date_slider = Slider(title="Date Range", start=agg_df['Model_Date'].min(), end=agg_df['Model_Date'].max(), step=1)
 
-# CustomJS for filtering
-callback = CustomJS(args=dict(source=source, date_range=date_range_slider, region_filter=region_filter), code="""
-    const data = source.data;
-    const date_start = new Date(date_range.value[0]);
-    const date_end = new Date(date_range.value[1]);
-    const regions = region_filter.active.map(i => region_filter.labels[i]);
+# Define callback function for filtering
+def update():
+    selected_country = dropdown.value
+    selected_date = date_slider.value
 
-    // Filter logic
-    const filtered_data = {
-        Model_Date: [], Metric: []
-    };
+    filtered_df = agg_df[(agg_df['Load_Region'] == selected_country) & (agg_df['Model_Date'] <= selected_date)]
+    source.data = filtered_df
 
-    for (let region of regions) {
-        filtered_data[region] = [];
-    }
+dropdown.on_change('value', lambda attr, old, new: update())
+date_slider.on_change('value', lambda attr, old, new: update())
 
-    for (let i = 0; i < data['Model_Date'].length; i++) {
-        const date = new Date(data['Model_Date'][i]);
-        if (date >= date_start && date <= date_end) {
-            filtered_data['Model_Date'].push(data['Model_Date'][i]);
-            filtered_data['Metric'].push(data['Metric'][i]);
-            for (let region of regions) {
-                filtered_data[region].push(data[region][i]);
-            }
-        }
-    }
+# Layout the widgets and table
+layout = layout([
+    [widgetbox(dropdown, date_slider)],
+    [data_table]
+])
 
-    for (let key in data) {
-        if (filtered_data.hasOwnProperty(key)) {
-            data[key] = filtered_data[key];
-        } else {
-            data[key] = [];
-        }
-    }
-    source.change.emit();
-""")
-
-date_range_slider.js_on_change('value', callback)
-region_filter.js_on_change('active', callback)
-
-# Layout with filters
-layout = column(widgetbox(date_range_slider, region_filter, data_table))
-
-# Add to the current document (for live updates)
 curdoc().add_root(layout)
-
-# If running as a script
-output_file("bokeh_table_with_filters.html")
-show(layout)
+curdoc().title = "Covid-19 Data Visualization"
 
 
 
