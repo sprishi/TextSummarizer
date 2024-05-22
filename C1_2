@@ -1,78 +1,112 @@
+
+
+
+===============================
+
 import pandas as pd
-from bokeh.io import curdoc
-from bokeh.layouts import column, row
-from bokeh.models import ColumnDataSource, DataTable, TableColumn, DateFormatter, NumberFormatter, Select, DateRangeSlider
-from dataiku import Dataset
+import numpy as np
+import pmdarima as pm
+import matplotlib.pyplot as plt
 
-# Read the prepared data from Dataiku
-data = Dataset("Prepared_Data").get_dataframe()
+# Step 1: Read and preprocess the data
+file_path = '/mnt/data/Weekly_U.S._Exports_of_Crude_Oil.csv'
+data = pd.read_csv(file_path, skiprows=4)
 
-# Create the ColumnDataSource
-source = ColumnDataSource(data)
+# Assuming the headers start from the fifth row
+data.columns = data.iloc[0]
+data = data[1:]
+data.columns = ['Week Ending', 'Volume (KBD)']
+data['Week Ending'] = pd.to_datetime(data['Week Ending'])
+data['Volume (KBD)'] = data['Volume (KBD)'].astype(float)
 
-# Define the columns for the DataTable
-columns = [
-    TableColumn(field="Model_Date", title="Date", formatter=DateFormatter(), sortable=False),
-    TableColumn(field="Load_Region", title="Country", sortable=False),
-    TableColumn(field="Total", title="Total", formatter=NumberFormatter(), sortable=False),
-    TableColumn(field="Positive", title="Positive", formatter=NumberFormatter(), sortable=False),
-    TableColumn(field="Negative", title="Negative", formatter=NumberFormatter(), sortable=False)
-]
+# Step 2: Transform weekly data to daily and then to monthly data
+data['Volume (Thousand Barrels)'] = data['Volume (KBD)'] * 7
 
-# Create the DataTable
-data_table = DataTable(source=source, columns=columns, width=1200, height=500)
+# Group by month and sum the volumes
+data.set_index('Week Ending', inplace=True)
 
-# Create the country filter
-countries = sorted(data["Load_Region"].unique())
-country_filter = Select(title="Country Filter", value="All", options=["All"] + countries)
+# Create a daily time series by forward filling the weekly data
+daily_data = data.resample('D').ffill()
 
-# Create the date range slider
-date_range_slider = DateRangeSlider(
-    title="Date Range",
-    value=(data["Model_Date"].min(), data["Model_Date"].max()),
-    start=data["Model_Date"].min(),
-    end=data["Model_Date"].max()
-)
+# Aggregate to monthly data by summing
+monthly_data = daily_data.resample('M').sum()
 
-# Update the data source based on filter selections
-def update_source():
-    view = source.data
+# Step 3: Train the ARIMA model
+# Use data from January 2019 to April 2024
+start_date = '2019-01-01'
+end_date = '2024-04-30'
+train_data = monthly_data[start_date:end_date]
 
-    # Filter by country
-    selected_country = country_filter.value
-    if selected_country != "All":
-        view = view[view["Load_Region"] == selected_country]
+# Fit the auto_arima model
+model = pm.auto_arima(train_data['Volume (Thousand Barrels)'], seasonal=True, m=12)
 
-    # Filter by date range
-    date_range = date_range_slider.value
-    view = view[
-        (view["Model_Date"] >= date_range[0]) & (view["Model_Date"] <= date_range[1])
-    ]
+# Step 4: Forecast for the next four months
+forecast_periods = 4
+forecast = model.predict(n_periods=forecast_periods)
 
-    source.data = view
+# Prepare forecast data for plotting
+forecast_dates = pd.date_range(start=train_data.index[-1] + pd.offsets.MonthBegin(), periods=forecast_periods, freq='M')
+forecast_series = pd.Series(forecast, index=forecast_dates)
 
-# Add callbacks to update the data source
-country_filter.on_change("value", lambda attr, old, new: update_source())
-date_range_slider.on_change("value", lambda attr, old, new: update_source())
+# Plotting the results
+plt.figure(figsize=(14, 7))
+plt.plot(train_data.index, train_data['Volume (Thousand Barrels)'], label='Historical Data')
+plt.plot(forecast_series.index, forecast_series, label='Forecast', color='red')
+plt.xlabel('Date')
+plt.ylabel('Volume (Thousand Barrels)')
+plt.title('US Crude Oil Export Forecast')
+plt.legend()
+plt.show()
 
-# Create the layout
-layout = column(
-    row(country_filter, date_range_slider),
-    data_table
-)
-
-# Add the layout to the Bokeh document
-curdoc().add_root(layout)
-curdoc().title = "COVID-19 Data Visualization"
-
-
-
-
-
+# Display forecast values
+print("Forecasted values for the next 4 months:")
+print(forecast_series)
 
 
 
 ---------
+
+import pandas as pd
+from pmdarima import auto_arima
+
+# Read the data from the CSV file
+data = pd.read_csv('Weekly_U.S._Exports_of_Crude_Oil.csv', header=4)
+
+# Convert the 'Week of' column to datetime format
+data['Week of'] = pd.to_datetime(data['Week of'])
+
+# Set the 'Week of' column as the index
+data.set_index('Week of', inplace=True)
+
+# Multiply the weekly values by 7 to get the total volume for the week
+data['Weekly U.S. Exports of Crude Oil Thousand Barrels per Day'] *= 7
+
+# Resample the data to monthly frequency and sum the values
+monthly_data = data['Weekly U.S. Exports of Crude Oil Thousand Barrels per Day'].resample('M').sum()
+
+# Convert the monthly data back to a DataFrame
+monthly_data = monthly_data.to_frame().reset_index()
+
+# Rename the columns
+monthly_data.columns = ['Month', 'Exports']
+
+# Convert the 'Exports' column to numeric type
+monthly_data['Exports'] = monthly_data['Exports'].astype(float)
+
+# Split the data into training and test sets
+train_data = monthly_data[monthly_data['Month'] < pd.to_datetime('2024-05-01')]
+test_data = monthly_data[monthly_data['Month'] >= pd.to_datetime('2024-05-01')]
+
+# Train the ARIMA model
+model = auto_arima(train_data['Exports'], seasonal=True, m=12, suppress_warnings=True)
+
+# Forecast the next 4 months
+forecast = model.predict(n_periods=4)
+
+# Print the forecast
+print(forecast)
+
+
 
 ---------
 
