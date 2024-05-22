@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 import dataiku
@@ -12,7 +13,7 @@ filter_columns = df1.columns[2:]
 # Function to convert numeric columns to integers
 def convert_to_int(df):
     for col in df.select_dtypes(include=['float64']).columns:
-        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
+        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype('Int64')
     return df
 
 # Convert relevant columns in df1 and df2 to integers
@@ -21,6 +22,9 @@ df2 = convert_to_int(df2)
 
 # Function to create a custom HTML table with merged cells
 def create_custom_table(df):
+    # Reset the index to remove it
+    df = df.reset_index(drop=True)
+    
     # Create an empty list to store rows
     rows = []
     for i, row in df.iterrows():
@@ -42,116 +46,75 @@ def create_custom_table(df):
 # Set page configuration for wider layout
 st.set_page_config(layout="wide")
 
-# App layout
-st.title("Data Viewer")
+# Function to check login credentials
+def check_login(username, password):
+    # Replace with your actual username and password check
+    return username == "admin" and password == "password"
 
-tab1, tab2 = st.tabs(["Model Hit/Fail Metric", "Marcopolo Metric"])
+# Function to display login page
+def login_page():
+    st.title("Login")
+    username = st.text_input("Username")
+    password = st.text_input("Password", type="password")
+    if st.button("Login"):
+        if check_login(username, password):
+            st.experimental_set_query_params(logged_in=True)
+            st.experimental_rerun()
+        else:
+            st.error("Invalid username or password")
 
-with tab1:
-    selected_columns = st.multiselect(
-        "Select columns to display",
-        options=filter_columns,
-        default=list(filter_columns)
-    )
+# Function to display the main application
+def main_page():
+    st.title("Data Viewer")
+    if st.button("Logout"):
+        st.experimental_set_query_params(logged_in=None)
+        st.experimental_rerun()
 
-    if selected_columns:
-        filtered_df1 = df1[[df1.columns[0]] + selected_columns]
-    else:
-        filtered_df1 = df1
-    
-    st.markdown(create_custom_table(filtered_df1.reset_index(drop=True)), unsafe_allow_html=True)
+    tab1, tab2 = st.tabs(["Model Hit/Fail Metric", "Marcopolo Metric"])
 
-with tab2:
-    st.dataframe(df2.reset_index(drop=True), use_container_width=True)
+    with tab1:
+        selected_columns = st.multiselect(
+            "Select columns to display",
+            options=filter_columns,
+            default=list(filter_columns)
+        )
 
+        if selected_columns:
+            filtered_df1 = df1[[df1.columns[0]] + selected_columns]
+        else:
+            filtered_df1 = df1
+        
+        st.markdown(create_custom_table(filtered_df1), unsafe_allow_html=True)
 
+    with tab2:
+        st.markdown(df2.style.hide_index().set_table_attributes('class="dataframe"').render(), unsafe_allow_html=True)
 
-
-==============================================
-
-import dash
-import dash_table
-import dash_core_components as dcc
-import dash_html_components as html
-from dash.dependencies import Input, Output
-import pandas as pd
-import dataiku
-
-# Fetch the datasets
-df1 = dataiku.Dataset("df1").get_dataframe().fillna('')
-df2 = dataiku.Dataset("df2").get_dataframe().fillna('')
-
-# Initialize the Dash app
-app = dash.Dash(__name__)
-
-# Extract column names for filtering
-filter_columns = df1.columns[2:]
-
-app.layout = html.Div([
-    dcc.Tabs([
-        dcc.Tab(label='Model Hit/Fail Metric', children=[
-            dcc.Dropdown(
-                id='column-filter',
-                options=[{'label': col, 'value': col} for col in filter_columns],
-                multi=True,
-                placeholder="Select columns to display"
-            ),
-            dcc.DatePickerRange(
-                id='date-picker-range',
-                start_date=df1[df1.columns[0]].min(),
-                end_date=df1[df1.columns[0]].max(),
-                display_format='YYYY-MM-DD',
-                start_date_placeholder_text='Start Date',
-                end_date_placeholder_text='End Date'
-            ),
-            dash_table.DataTable(
-                id='table1',
-                columns=[{"name": i, "id": i} for i in df1.columns],
-                data=df1.to_dict('records'),
-                style_table={'height': 'auto', 'overflowY': 'auto'},
-                style_cell={'minWidth': '150px', 'width': '150px', 'maxWidth': '150px', 'whiteSpace': 'normal'}
-            )
-        ]),
-        dcc.Tab(label='Marcopolo Metric', children=[
-            dash_table.DataTable(
-                id='table2',
-                columns=[{"name": i, "id": i} for i in df2.columns],
-                data=df2.to_dict('records'),
-                style_table={'height': 'auto', 'overflowY': 'auto'},
-                style_cell={'minWidth': '150px', 'width': '150px', 'maxWidth': '150px', 'whiteSpace': 'normal'}
-            )
-        ])
-    ])
-])
-
-@app.callback(
-    Output('table1', 'columns'),
-    Output('table1', 'data'),
-    Input('column-filter', 'value'),
-    Input('date-picker-range', 'start_date'),
-    Input('date-picker-range', 'end_date')
-)
-def update_table(selected_columns, start_date, end_date):
-    filtered_df = df1[(df1[df1.columns[0]] >= start_date) & (df1[df1.columns[0]] <= end_date)]
-    if selected_columns:
-        columns = [{"name": i, "id": i} for i in [df1.columns[0]] + selected_columns]
-        data = filtered_df[[df1.columns[0]] + selected_columns].to_dict('records')
-    else:
-        columns = [{"name": i, "id": i} for i in df1.columns]
-        data = filtered_df.to_dict('records')
-    return columns, data
-
-if __name__ == '__main__':
-    app.run_server(debug=True)
+# Check login status
+query_params = st.experimental_get_query_params()
+if query_params.get("logged_in") == ['True']:
+    main_page()
+else:
+    login_page()
 
 
-"""
 
 
+
+================================================
 
 import streamlit as st
 import pandas as pd
 import dataiku
+from streamlit_cookies_manager import EncryptedCookieManager
+
+# This needs to be called once, and must be called immediately after streamlit imports.
+cookie_manager = EncryptedCookieManager(
+    prefix="my_app/",  # Define a cookie prefix
+    password="YourPasswordHere"  # Define a password
+)
+
+# Load cookies
+cookie_manager.load()
 
 # Fetch the datasets
 df1 = dataiku.Dataset("df1").get_dataframe().fillna('')
@@ -160,31 +123,94 @@ df2 = dataiku.Dataset("df2").get_dataframe().fillna('')
 # Extract column names for filtering
 filter_columns = df1.columns[2:]
 
-# App layout
-st.title("Data Viewer")
+# Function to convert numeric columns to integers
+def convert_to_int(df):
+    for col in df.select_dtypes(include=['float64']).columns:
+        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype('Int64')
+    return df
 
-tab1, tab2 = st.tabs(["Model Hit/Fail Metric", "Marcopolo Metric"])
+# Convert relevant columns in df1 and df2 to integers
+df1 = convert_to_int(df1)
+df2 = convert_to_int(df2)
 
-with tab1:
-    selected_columns = st.multiselect(
-        "Select columns to display",
-        options=filter_columns,
-        default=filter_columns
-    )
-    start_date, end_date = st.date_input(
-        "Select date range",
-        value=[df1[df1.columns[0]].min(), df1[df1.columns[0]].max()],
-        min_value=df1[df1.columns[0]].min(),
-        max_value=df1[df1.columns[0]].max()
-    )
-    filtered_df1 = df1[(df1[df1.columns[0]] >= start_date) & (df1[df1.columns[0]] <= end_date)]
-    if selected_columns:
-        st.dataframe(filtered_df1[[df1.columns[0]] + selected_columns])
-    else:
-        st.dataframe(filtered_df1)
+# Function to create a custom HTML table with merged cells
+def create_custom_table(df):
+    # Reset the index to remove it
+    df = df.reset_index(drop=True)
+    
+    # Create an empty list to store rows
+    rows = []
+    for i, row in df.iterrows():
+        # If the date is the same as the previous row, set it to an empty string
+        if i > 0 and df.iloc[i, 0] == df.iloc[i-1, 0]:
+            row[0] = ''
+        rows.append(row)
 
-with tab2:
-    st.dataframe(df2)
+    # Create HTML for the table
+    html = '<table border="1" width="100%">'
+    html += '<thead><tr>' + ''.join([f'<th>{col}</th>' for col in df.columns]) + '</tr></thead>'
+    html += '<tbody>'
+    for row in rows:
+        html += '<tr>' + ''.join([f'<td>{value}</td>' for value in row]) + '</tr>'
+    html += '</tbody></table>'
+    
+    return html
+
+# Set page configuration for wider layout
+st.set_page_config(layout="wide")
+
+# Function to check login credentials
+def check_login(username, password):
+    # Replace with your actual username and password check
+    return username == "admin" and password == "password"
+
+# Function to display login page
+def login_page():
+    st.title("Login")
+    username = st.text_input("Username")
+    password = st.text_input("Password", type="password")
+    if st.button("Login"):
+        if check_login(username, password):
+            cookie_manager["logged_in"] = "True"
+            cookie_manager.save()
+            st.experimental_rerun()
+        else:
+            st.error("Invalid username or password")
+
+# Function to display the main application
+def main_page():
+    st.title("Data Viewer")
+    if st.button("Logout"):
+        cookie_manager["logged_in"] = "False"
+        cookie_manager.save()
+        st.experimental_rerun()
+
+    tab1, tab2 = st.tabs(["Model Hit/Fail Metric", "Marcopolo Metric"])
+
+    with tab1:
+        selected_columns = st.multiselect(
+            "Select columns to display",
+            options=filter_columns,
+            default=list(filter_columns)
+        )
+
+        if selected_columns:
+            filtered_df1 = df1[[df1.columns[0]] + selected_columns]
+        else:
+            filtered_df1 = df1
+        
+        st.markdown(create_custom_table(filtered_df1), unsafe_allow_html=True)
+
+    with tab2:
+        st.markdown(df2.style.hide_index().set_table_attributes('class="dataframe"').render(), unsafe_allow_html=True)
+
+# Check login status using cookies
+if cookie_manager.get("logged_in") == "True":
+    main_page()
+else:
+    login_page()
 
 
- 
+=======
+
+
