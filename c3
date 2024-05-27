@@ -1,100 +1,47 @@
 
-import streamlit as st
+from transformers import BertTokenizer, BertModel
+import torch
+from sklearn.metrics.pairwise import cosine_similarity
 import pandas as pd
-import dataiku
 
-# Fetch the datasets
-df1 = dataiku.Dataset("df1").get_dataframe().fillna('')
-df2 = dataiku.Dataset("df2").get_dataframe().fillna('')
+# Load pre-trained BERT tokenizer and model
+tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+model = BertModel.from_pretrained('bert-base-uncased')
 
-# Extract column names for filtering
-filter_columns = df1.columns[2:]
+# Function to get BERT embeddings
+def get_embeddings(text):
+    inputs = tokenizer(text, return_tensors='pt', truncation=True, padding=True, max_length=128)
+    outputs = model(**inputs)
+    return outputs.last_hidden_state.mean(dim=1).detach().numpy()
 
-# Function to convert numeric columns to integers
-def convert_to_int(df):
-    for col in df.select_dtypes(include=['float64']).columns:
-        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype('Int64')
-    return df
+# Load the locode data
+locode_df = pd.read_csv('locode_data.csv')
 
-# Convert relevant columns in df1 and df2 to integers
-df1 = convert_to_int(df1)
-df2 = convert_to_int(df2)
+# Fill NA values with empty strings
+locode_df.fillna('', inplace=True)
 
-# Function to create a custom HTML table with merged cells
-def create_custom_table(df):
-    # Reset the index to remove it
-    df = df.reset_index(drop=True)
-    
-    # Create an empty list to store rows
-    rows = []
-    for i, row in df.iterrows():
-        # If the date is the same as the previous row, set it to an empty string
-        if i > 0 and df.iloc[i, 0] == df.iloc[i-1, 0]:
-            row[0] = ''
-        rows.append(row)
+# Combine relevant columns into a single string for each row
+locode_df['combined'] = locode_df[['country_code', 'country_name', 'location_code', 'location_name', 'sub_division_code', 'sub_division_name', 'sub_division_type']].apply(lambda x: ' '.join(x), axis=1)
 
-    # Create HTML for the table
-    html = '<table border="1" width="100%">'
-    html += '<thead><tr>' + ''.join([f'<th>{col}</th>' for col in df.columns]) + '</tr></thead>'
-    html += '<tbody>'
-    for row in rows:
-        html += '<tr>' + ''.join([f'<td>{value}</td>' for value in row]) + '</tr>'
-    html += '</tbody></table>'
-    
-    return html
+# Get embeddings for all rows in locode data
+locode_df['embeddings'] = locode_df['combined'].apply(lambda x: get_embeddings(x).squeeze())
 
-# Set page configuration for wider layout
-st.set_page_config(layout="wide")
+# Load the AIS data
+ais_df = pd.read_csv('ais_data.csv')
 
-# Function to check login credentials
-def check_login(username, password):
-    # Replace with your actual username and password check
-    return username == "admin" and password == "password"
+# Create a function to find the most similar row in locode data
+def find_most_similar(ais_destination):
+    ais_embedding = get_embeddings(ais_destination).squeeze()
+    locode_df['similarity'] = locode_df['embeddings'].apply(lambda x: cosine_similarity([ais_embedding], [x])[0][0])
+    most_similar_row = locode_df.loc[locode_df['similarity'].idxmax()]
+    return most_similar_row
 
-# Function to display login page
-def login_page():
-    st.title("Login")
-    username = st.text_input("Username")
-    password = st.text_input("Password", type="password")
-    if st.button("Login"):
-        if check_login(username, password):
-            st.experimental_set_query_params(logged_in=True)
-            st.experimental_rerun()
-        else:
-            st.error("Invalid username or password")
+# Apply the function to each AIS destination and store results
+ais_df['most_similar_locode'] = ais_df['AIS_destination'].apply(find_most_similar)
 
-# Function to display the main application
-def main_page():
-    st.title("Data Viewer")
-    if st.button("Logout"):
-        st.experimental_set_query_params(logged_in=None)
-        st.experimental_rerun()
+# Print the results for verification
+print(ais_df[['AIS_destination', 'most_similar_locode']])
 
-    tab1, tab2 = st.tabs(["Model Hit/Fail Metric", "Marcopolo Metric"])
-
-    with tab1:
-        selected_columns = st.multiselect(
-            "Select columns to display",
-            options=filter_columns,
-            default=list(filter_columns)
-        )
-
-        if selected_columns:
-            filtered_df1 = df1[[df1.columns[0]] + selected_columns]
-        else:
-            filtered_df1 = df1
-        
-        st.markdown(create_custom_table(filtered_df1), unsafe_allow_html=True)
-
-    with tab2:
-        st.markdown(df2.style.hide_index().set_table_attributes('class="dataframe"').render(), unsafe_allow_html=True)
-
-# Check login status
-query_params = st.experimental_get_query_params()
-if query_params.get("logged_in") == ['True']:
-    main_page()
-else:
-    login_page()
 
 
 
