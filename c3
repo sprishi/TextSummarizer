@@ -1,14 +1,13 @@
-
-from transformers import BertTokenizer, BertModel
+from transformers import AutoTokenizer, AutoModel
 import torch
 from sklearn.metrics.pairwise import cosine_similarity
 import pandas as pd
 
-# Load pre-trained BERT tokenizer and model
-tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
-model = BertModel.from_pretrained('bert-base-uncased')
+# Load pre-trained MiniLM tokenizer and model
+tokenizer = AutoTokenizer.from_pretrained('microsoft/MiniLM-L12-H384-uncased')
+model = AutoModel.from_pretrained('microsoft/MiniLM-L12-H384-uncased')
 
-# Function to get BERT embeddings
+# Function to get MiniLM embeddings
 def get_embeddings(text):
     inputs = tokenizer(text, return_tensors='pt', truncation=True, padding=True, max_length=128)
     outputs = model(**inputs)
@@ -20,8 +19,17 @@ locode_df = pd.read_csv('locode_data.csv')
 # Fill NA values with empty strings
 locode_df.fillna('', inplace=True)
 
-# Combine relevant columns into a single string for each row
-locode_df['combined'] = locode_df[['country_code', 'country_name', 'location_code', 'location_name', 'sub_division_code', 'sub_division_name', 'sub_division_type']].apply(lambda x: ' '.join(x), axis=1)
+# Combine relevant columns into a single string for each row with weights
+locode_df['combined'] = locode_df.apply(
+    lambda x: ' '.join([
+        f"{x['country_code']} " * 2,
+        f"{x['country_name']} " * 2,
+        f"{x['location_code']} " * 3,
+        f"{x['location_name']} " * 3,
+        f"{x['sub_division_code']} " * 1,
+        f"{x['sub_division_name']} " * 1,
+        f"{x['sub_division_type']} " * 1
+    ]), axis=1)
 
 # Get embeddings for all rows in locode data
 locode_df['embeddings'] = locode_df['combined'].apply(lambda x: get_embeddings(x).squeeze())
@@ -34,13 +42,14 @@ def find_most_similar(ais_destination):
     ais_embedding = get_embeddings(ais_destination).squeeze()
     locode_df['similarity'] = locode_df['embeddings'].apply(lambda x: cosine_similarity([ais_embedding], [x])[0][0])
     most_similar_row = locode_df.loc[locode_df['similarity'].idxmax()]
-    return most_similar_row
+    return most_similar_row[['country_code', 'country_name', 'location_code', 'location_name', 'sub_division_code', 'sub_division_name', 'sub_division_type']]
 
 # Apply the function to each AIS destination and store results
 ais_df['most_similar_locode'] = ais_df['AIS_destination'].apply(find_most_similar)
 
 # Print the results for verification
 print(ais_df[['AIS_destination', 'most_similar_locode']])
+
 
 
 
