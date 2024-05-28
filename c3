@@ -1,17 +1,17 @@
-from transformers import AutoTokenizer, AutoModel
+import pandas as pd
 import torch
 from sklearn.metrics.pairwise import cosine_similarity
-import pandas as pd
+from transformers import AutoTokenizer, AutoModelForMaskedLM, Trainer, TrainingArguments
 
-# Load pre-trained MiniLM tokenizer and model
-tokenizer = AutoTokenizer.from_pretrained('microsoft/MiniLM-L12-H384-uncased')
-model = AutoModel.from_pretrained('microsoft/MiniLM-L12-H384-uncased')
+# Model selection
+MODEL_NAME = 'microsoft/MiniLM-L12-H384-uncased'
+# Uncomment the following lines to switch models
+# MODEL_NAME = 'bert-base-uncased'
+# MODEL_NAME = 'roberta-base'
 
-# Function to get MiniLM embeddings
-def get_embeddings(text):
-    inputs = tokenizer(text, return_tensors='pt', truncation=True, padding=True, max_length=128)
-    outputs = model(**inputs)
-    return outputs.last_hidden_state.mean(dim=1).detach().numpy()
+# Load tokenizer and model
+tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+model = AutoModelForMaskedML.from_pretrained(MODEL_NAME)
 
 # Load the locode data
 locode_df = pd.read_csv('locode_data.csv')
@@ -31,24 +31,75 @@ locode_df['combined'] = locode_df.apply(
         f"{x['sub_division_type']} " * 1
     ]), axis=1)
 
-# Get embeddings for all rows in locode data
-locode_df['embeddings'] = locode_df['combined'].apply(lambda x: get_embeddings(x).squeeze())
+# Prepare the dataset for fine-tuning
+locode_texts = locode_df['combined'].tolist()
+inputs = tokenizer(locode_texts, return_tensors='pt', max_length=128, truncation=True, padding=True)
+
+class LocodeDataset(torch.utils.data.Dataset):
+    def __init__(self, encodings):
+        self.encodings = encodings
+    
+    def __getitem__(self, idx):
+        return {key: torch.tensor(val[idx]) for key, val in self.encodings.items()}
+    
+    def __len__(self):
+        return len(self.encodings['input_ids'])
+
+dataset = LocodeDataset(inputs)
+
+# Set up training arguments for fine-tuning
+training_args = TrainingArguments(
+    output_dir='./results',          
+    num_train_epochs=3,              
+    per_device_train_batch_size=8,  
+    save_steps=10_000,               
+    save_total_limit=2,             
+)
+
+# Initialize the Trainer for fine-tuning
+trainer = Trainer(
+    model=model,                         
+    args=training_args,                  
+    train_dataset=dataset,         
+)
+
+# Train the model
+trainer.train()
+
+# Save the fine-tuned model
+model.save_pretrained('/path/to/save/fine_tuned_model')
+tokenizer.save_pretrained('/path/to/save/fine_tuned_model')
+
+# Load the fine-tuned model for similarity search
+fine_tuned_model = AutoModelForMaskedLM.from_pretrained('/path/to/save/fine_tuned_model')
+fine_tuned_tokenizer = AutoTokenizer.from_pretrained('/path/to/save/fine_tuned_model')
+
+def get_embeddings(text):
+    inputs = fine_tuned_tokenizer(text, return_tensors='pt', truncation=True, padding=True, max_length=128)
+    outputs = fine_tuned_model(**inputs)
+    return outputs.last_hidden_state.mean(dim=1).detach().numpy()
 
 # Load the AIS data
 ais_df = pd.read_csv('ais_data.csv')
 
-# Create a function to find the most similar row in locode data
-def find_most_similar(ais_destination):
-    ais_embedding = get_embeddings(ais_destination).squeeze()
-    locode_df['similarity'] = locode_df['embeddings'].apply(lambda x: cosine_similarity([ais_embedding], [x])[0][0])
+# Preprocess AIS destinations
+ais_df['preprocessed_destination'] = ais_df['AIS_destination']
+
+# Function to find the most similar row in locode data after preprocessing
+def find_most_similar(preprocessed_destination):
+    destination_embedding = get_embeddings(preprocessed_destination).squeeze()
+    locode_df['similarity'] = locode_df['combined'].apply(lambda x: cosine_similarity([destination_embedding], [get_embeddings(x).squeeze()])[0][0])
     most_similar_row = locode_df.loc[locode_df['similarity'].idxmax()]
     return most_similar_row[['country_code', 'country_name', 'location_code', 'location_name', 'sub_division_code', 'sub_division_name', 'sub_division_type']]
 
-# Apply the function to each AIS destination and store results
-ais_df['most_similar_locode'] = ais_df['AIS_destination'].apply(find_most_similar)
+# Apply the function to each preprocessed AIS destination and store results
+ais_df['most_similar_locode'] = ais_df['preprocessed_destination'].apply(find_most_similar)
 
 # Print the results for verification
-print(ais_df[['AIS_destination', 'most_similar_locode']])
+print(ais_df[['AIS_destination', 'preprocessed_destination', 'most_similar_locode']])
+
+# Save the results
+ais_df.to_csv('ais_similarity_results.csv', index=False)
 
 
 
