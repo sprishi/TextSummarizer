@@ -1,0 +1,89 @@
+import pandas as pd
+from geopy.distance import geodesic
+from datetime import datetime, timedelta
+
+# Sample AIS data with draught
+data = {
+    'timestamp': [
+        '2024-05-23 00:00:00', '2024-05-23 01:00:00', '2024-05-23 02:00:00', 
+        '2024-05-23 00:00:00', '2024-05-23 01:00:00', '2024-05-23 02:00:00'
+    ],
+    'MMSI': [123456789, 123456789, 123456789, 987654321, 987654321, 987654321],
+    'latitude': [25.0, 25.1, 25.2, 25.0, 25.1, 25.2],
+    'longitude': [55.0, 55.1, 55.2, 55.0, 55.1, 55.2],
+    'speed': [0, 0, 0, 0, 0, 0],
+    'navigational_status': ['Moored', 'Moored', 'Moored', 'Moored', 'Moored', 'Moored'],
+    'draught': [5.0, 5.2, 5.4, 10.0, 9.8, 9.6]  # Sample draught values
+}
+
+# Load data into a DataFrame
+df = pd.DataFrame(data)
+
+# Convert timestamp to datetime
+df['timestamp'] = pd.to_datetime(df['timestamp'])
+
+# Filter for the past 24 hours
+now = datetime.utcnow()
+last_24_hours = now - timedelta(hours=24)
+df = df[df['timestamp'] >= last_24_hours]
+
+# Group data by ship (MMSI)
+grouped = df.groupby('MMSI')
+
+# Define a function to calculate distance between two points
+def calculate_distance(lat1, lon1, lat2, lon2):
+    return geodesic((lat1, lon1), (lat2, lon2)).meters
+
+# Identify potential STS operations
+sts_operations = []
+
+for ship1, data1 in grouped:
+    for ship2, data2 in grouped:
+        if ship1 >= ship2:  # Avoid duplicate checks and self-comparison
+            continue
+        data1 = data1.sort_values(by='timestamp')
+        data2 = data2.sort_values(by='timestamp')
+        consecutive_nearby_time = timedelta(0)
+        total_nearby_time = timedelta(0)
+        last_nearby_time = None
+        start_draught_ship1 = None
+        end_draught_ship1 = None
+        start_draught_ship2 = None
+        end_draught_ship2 = None
+
+        for i, row1 in data1.iterrows():
+            for j, row2 in data2.iterrows():
+                if row1['timestamp'] == row2['timestamp']:
+                    distance = calculate_distance(row1['latitude'], row1['longitude'], row2['latitude'], row2['longitude'])
+                    if distance < 500 and (row1['speed'] < 2 or row1['navigational_status'] in ['Moored', 'Restricted Manoeuvring']) and (row2['speed'] < 2 or row2['navigational_status'] in ['Moored', 'Restricted Manoeuvring']):
+                        if last_nearby_time:
+                            consecutive_nearby_time = row1['timestamp'] - last_nearby_time
+                        last_nearby_time = row1['timestamp']
+                        total_nearby_time += consecutive_nearby_time
+                        if start_draught_ship1 is None:
+                            start_draught_ship1 = row1['draught']
+                        end_draught_ship1 = row1['draught']
+                        if start_draught_ship2 is None:
+                            start_draught_ship2 = row2['draught']
+                        end_draught_ship2 = row2['draught']
+                    else:
+                        consecutive_nearby_time = timedelta(0)
+                        last_nearby_time = None
+
+        if total_nearby_time > timedelta(0):
+            # Calculate draught percentage change
+            draught_change_ship1 = ((end_draught_ship1 - start_draught_ship1) / start_draught_ship1 * 100) if start_draught_ship1 else None
+            draught_change_ship2 = ((end_draught_ship2 - start_draught_ship2) / start_draught_ship2 * 100) if start_draught_ship2 else None
+            sts_operations.append({
+                'ship1': ship1,
+                'ship2': ship2,
+                'total_nearby_time': total_nearby_time,
+                'last_nearby_time': last_nearby_time,
+                'current_status': 'performing STS' if last_nearby_time and last_nearby_time >= now - timedelta(hours=1) else 'not performing STS',
+                'draught_change_ship1 (%)': draught_change_ship1,
+                'draught_change_ship2 (%)': draught_change_ship2
+            })
+
+# Convert STS operations to a DataFrame for better readability
+sts_df = pd.DataFrame(sts_operations)
+print(sts_df)
