@@ -1,3 +1,47 @@
+
+# Function to create the pydeck map
+def create_map(filtered_df):
+    arc_layer = pdk.Layer(
+        "ArcLayer",
+        filtered_df,
+        get_source_position=["lon", "lat"],
+        get_target_position=["lon", "lat"],
+        get_source_color=[0, 128, 200],
+        get_target_color=[0, 255, 0],
+        get_width=5,
+    )
+    
+    scatter_layer = pdk.Layer(
+        "ScatterplotLayer",
+        filtered_df,
+        get_position=["lon", "lat"],
+        get_radius=100,
+        get_fill_color=[255, 0, 0],
+        pickable=True,
+    )
+    
+    view_state = pdk.ViewState(
+        latitude=filtered_df["lat"].mean(),
+        longitude=filtered_df["lon"].mean(),
+        zoom=3,
+        pitch=50,
+    )
+    
+    r = pdk.Deck(
+        layers=[scatter_layer, arc_layer],
+        initial_view_state=view_state,
+        tooltip={"text": "{lat}, {lon}"},
+    )
+    
+    st.pydeck_chart(r)
+
+
+
+
+
+
+-------------------------------------------------------------
+
 import pandas as pd
 from geopy.distance import geodesic
 from datetime import datetime, timedelta
