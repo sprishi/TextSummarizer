@@ -1,38 +1,12 @@
-import pandas as pd
-from geopy.distance import geodesic
-from datetime import datetime, timedelta
+# List of port coordinates (latitude, longitude)
+ports = [(25.0, 55.0), (24.5, 54.5)]  # Example port coordinates
 
-# Sample AIS data with draught
-data = {
-    'timestamp': [
-        '2024-05-23 00:00:00', '2024-05-23 01:00:00', '2024-05-23 02:00:00', 
-        '2024-05-23 00:05:00', '2024-05-23 01:05:00', '2024-05-23 02:05:00'
-    ],
-    'MMSI': [123456789, 123456789, 123456789, 987654321, 987654321, 987654321],
-    'latitude': [25.0, 25.1, 25.2, 25.0, 25.1, 25.2],
-    'longitude': [55.0, 55.1, 55.2, 55.0, 55.1, 55.2],
-    'speed': [3, 3, 3, 3, 3, 3],
-    'heading': [90, 90, 90, 90, 90, 90],
-    'draught': [5.0, 5.2, 5.4, 10.0, 9.8, 9.6]  # Sample draught values
-}
-
-# Load data into a DataFrame
-df = pd.DataFrame(data)
-
-# Convert timestamp to datetime
-df['timestamp'] = pd.to_datetime(df['timestamp'])
-
-# Filter for the past 24 hours
-now = datetime.utcnow()
-last_24_hours = now - timedelta(hours=24)
-df = df[df['timestamp'] >= last_24_hours]
-
-# Group data by ship (MMSI)
-grouped = df.groupby('MMSI')
-
-# Define a function to calculate distance between two points
-def calculate_distance(lat1, lon1, lat2, lon2):
-    return geodesic((lat1, lon1), (lat2, lon2)).meters
+# Define a function to check if a ship is near any port
+def is_near_port(lat, lon, ports, max_distance=1000):
+    for port in ports:
+        if calculate_distance(lat, lon, port[0], port[1]) < max_distance:
+            return True
+    return False
 
 # Identify potential STS operations
 sts_operations = []
@@ -46,7 +20,7 @@ for ship1, data1 in data_dict.items():
             continue
 
         data1 = data1.sort_values(by='timestamp')
-        data2 = data2.sort_values(by='timestamp')
+        data2 = data2.sort_values(by 'timestamp')
         consecutive_nearby_time = timedelta(0)
         total_nearby_time = timedelta(0)
         last_nearby_time = None
@@ -64,7 +38,7 @@ for ship1, data1 in data_dict.items():
                 distances = window_data2.apply(lambda row: calculate_distance(row1['latitude'], row1['longitude'], row['latitude'], row['longitude']), axis=1)
                 close_ships = window_data2[(distances < 500) & (abs(window_data2['speed'] - row1['speed']) < 1) & (abs(window_data2['heading'] - row1['heading']) < 10) & (window_data2['speed'] < 6)]
 
-                if not close_ships.empty:
+                if not close_ships.empty and not is_near_port(row1['latitude'], row1['longitude'], ports) and not is_near_port(close_ships.iloc[0]['latitude'], close_ships.iloc[0]['longitude'], ports):
                     if last_nearby_time:
                         consecutive_nearby_time = row1['timestamp'] - last_nearby_time
                     last_nearby_time = row1['timestamp']
