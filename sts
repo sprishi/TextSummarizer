@@ -121,28 +121,51 @@ for ship1, data1 in data_dict.items():
 # Convert STS operations to a DataFrame for better readability
 sts_df = pd.DataFrame(sts_operations)
 
-# Track chains of STS operations
+# Track chains of STS operations with identifiers
 motherships = {}
+group_id = 1
 
 for _, row in sts_df.iterrows():
-    mothership = row['ship1']
-    childship = row['ship2']
+    ship1 = row['ship1']
+    ship2 = row['ship2']
     
-    if mothership not in motherships:
-        motherships[mothership] = {'childships': set(), 'operations': []}
+    # Initialize entries if not present
+    if ship1 not in motherships and ship2 not in motherships:
+        # Both ships are new, create a new group
+        motherships[ship1] = {'childships': set(), 'operations': [], 'group_id': group_id}
+        motherships[ship2] = {'childships': set(), 'operations': [], 'group_id': group_id}
+        group_id += 1
+    elif ship1 in motherships and ship2 not in motherships:
+        # Ship1 exists, add ship2 to ship1's group
+        motherships[ship2] = {'childships': set(), 'operations': [], 'group_id': motherships[ship1]['group_id']}
+    elif ship2 in motherships and ship1 not in motherships:
+        # Ship2 exists, add ship1 to ship2's group
+        motherships[ship1] = {'childships': set(), 'operations': [], 'group_id': motherships[ship2]['group_id']}
     
-    motherships[mothership]['childships'].add(childship)
-    motherships[mothership]['operations'].append(row)
+    # Add ship2 as a childship of ship1 and record the operation
+    motherships[ship1]['childships'].add(ship2)
+    motherships[ship1]['operations'].append(row)
+    
+    # Add ship1 as a childship of ship2 and record the operation
+    motherships[ship2]['childships'].add(ship1)
+    motherships[ship2]['operations'].append(row)
+    
+    # Ensure both ships have the same group_id
+    motherships[ship2]['group_id'] = motherships[ship1]['group_id']
 
-# Example of accessing the chain for a specific mothership
-for mothership, details in motherships.items():
-    print(f"Mothership {mothership} has performed STS operations with childships {details['childships']}")
+# Add group_id to the final dataframe
+sts_df['group_id'] = sts_df.apply(lambda row: motherships[row['ship1']]['group_id'], axis=1)
+
+# Sort the dataframe by recency
+sts_df = sts_df.sort_values(by='end_time', ascending=False)
+
+# Example of accessing the chain for a specific group
+for group_id, details in sorted(motherships.items(), key=lambda x: x[1]['group_id']):
+    print(f"Group {group_id} has performed STS operations with ships {details['childships']}")
     print("STS operations:")
     print(pd.DataFrame(details['operations']))
 
-
-
-
+print(sts_df)
 
 ====================
 
