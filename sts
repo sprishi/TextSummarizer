@@ -1,3 +1,151 @@
+
+import pandas as pd
+from geopy.distance import geodesic
+from datetime import datetime, timedelta
+
+# Sample AIS data with draught and destination
+data = {
+    'timestamp': [
+        '2024-05-01 00:00:00', '2024-05-02 01:00:00', '2024-05-03 02:00:00', 
+        '2024-05-04 00:05:00', '2024-05-05 01:05:00', '2024-05-06 02:05:00',
+        '2024-05-07 03:05:00', '2024-05-08 04:05:00', '2024-05-09 05:05:00',
+        '2024-05-10 06:05:00', '2024-05-11 07:05:00', '2024-05-12 08:05:00'
+    ],
+    'MMSI': [123456789, 123456789, 123456789, 987654321, 987654321, 987654321, 
+             123456789, 123456789, 123456789, 987654321, 987654321, 987654321],
+    'latitude': [25.0, 25.1, 25.2, 25.0, 25.1, 25.2, 25.3, 25.4, 25.5, 25.6, 25.7, 25.8],
+    'longitude': [55.0, 55.1, 55.2, 55.0, 55.1, 55.2, 55.3, 55.4, 55.5, 55.6, 55.7, 55.8],
+    'speed': [3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3],
+    'heading': [90, 90, 90, 90, 90, 90, 90, 90, 90, 90, 90, 90],
+    'draught': [5.0, 5.2, 5.4, 10.0, 9.8, 9.6, 5.5, 5.6, 5.7, 9.5, 9.4, 9.3],  # Sample draught values
+    'destination': ['Port A', 'Port A', 'Port A', 'Port B', 'Port B', 'Port B', 
+                    'Port C', 'Port C', 'Port C', 'Port D', 'Port D', 'Port D']  # Sample destination values
+}
+
+# List of port coordinates (latitude, longitude)
+ports = [(25.0, 55.0), (24.5, 54.5)]  # Example port coordinates
+
+# Load data into a DataFrame
+df = pd.DataFrame(data)
+
+# Convert timestamp to datetime
+df['timestamp'] = pd.to_datetime(df['timestamp'])
+
+# Group data by ship (MMSI)
+grouped = df.groupby('MMSI')
+
+# Define a function to calculate distance between two points
+def calculate_distance(lat1, lon1, lat2, lon2):
+    return geodesic((lat1, lon1), (lat2, lon2)).meters
+
+# Define a function to check if a ship is near any port
+def is_near_port(lat, lon, ports, max_distance=1000):
+    for port in ports:
+        if calculate_distance(lat, lon, port[0], port[1]) < max_distance:
+            return True
+    return False
+
+# Identify potential STS operations
+sts_operations = []
+chains = []
+
+# Create a dictionary to store data for quick lookup
+data_dict = {mmsi: group for mmsi, group in grouped}
+
+for ship1, data1 in data_dict.items():
+    for ship2, data2 in data_dict.items():
+        if ship1 >= ship2:  # Avoid duplicate checks and self-comparison
+            continue
+
+        data1 = data1.sort_values(by='timestamp')
+        data2 = data2.sort_values(by='timestamp')
+        consecutive_nearby_time = timedelta(0)
+        total_nearby_time = timedelta(0)
+        start_time = None
+        end_time = None
+        start_draught_ship1 = None
+        end_draught_ship1 = None
+        start_draught_ship2 = None
+        end_draught_ship2 = None
+
+        # Iterate over data1 and use vectorized operations for data2 within the 5-minute window
+        for _, row1 in data1.iterrows():
+            time_window = (row1['timestamp'] - timedelta(minutes=5), row1['timestamp'] + timedelta(minutes=5))
+            window_data2 = data2[(data2['timestamp'] >= time_window[0]) & (data2['timestamp'] <= time_window[1])]
+
+            if not window_data2.empty:
+                distances = window_data2.apply(lambda row: calculate_distance(row1['latitude'], row1['longitude'], row['latitude'], row['longitude']), axis=1)
+                close_ships = window_data2[(distances < 500) & (abs(window_data2['speed'] - row1['speed']) < 1) & (abs(window_data2['heading'] - row1['heading']) < 10) & (window_data2['speed'] < 6)]
+
+                if not close_ships.empty and not is_near_port(row1['latitude'], row1['longitude'], ports) and not is_near_port(close_ships.iloc[0]['latitude'], close_ships.iloc[0]['longitude'], ports):
+                    if start_time is None:
+                        start_time = row1['timestamp']
+                    end_time = row1['timestamp']
+                    if last_nearby_time:
+                        consecutive_nearby_time = row1['timestamp'] - last_nearby_time
+                    last_nearby_time = row1['timestamp']
+                    total_nearby_time += consecutive_nearby_time
+                    if start_draught_ship1 is None:
+                        start_draught_ship1 = row1['draught']
+                    end_draught_ship1 = row1['draught']
+                    if start_draught_ship2 is None:
+                        start_draught_ship2 = close_ships.iloc[0]['draught']
+                    end_draught_ship2 = close_ships.iloc[0]['draught']
+                else:
+                    consecutive_nearby_time = timedelta(0)
+                    last_nearby_time = None
+
+        latest_timestamp_ship1 = data1['timestamp'].max()
+        latest_timestamp_ship2 = data2['timestamp'].max()
+        still_nearby = last_nearby_time == latest_timestamp_ship1 or last_nearby_time == latest_timestamp_ship2
+
+        if total_nearby_time > timedelta(hours=4) or still_nearby:
+            # Calculate draught percentage change
+            draught_change_ship1 = ((end_draught_ship1 - start_draught_ship1) / start_draught_ship1 * 100) if start_draught_ship1 else None
+            draught_change_ship2 = ((end_draught_ship2 - start_draught_ship2) / start_draught_ship2 * 100) if start_draught_ship2 else None
+            sts_operations.append({
+                'ship1': ship1,
+                'ship2': ship2,
+                'start_time': start_time,
+                'end_time': end_time,
+                'total_nearby_time': total_nearby_time,
+                'last_nearby_time': last_nearby_time,
+                'current_status': 'performing STS' if still_nearby else 'not performing STS',
+                'draught_change_ship1 (%)': draught_change_ship1,
+                'draught_change_ship2 (%)': draught_change_ship2,
+                'destination_ship1': data1['destination'].iloc[-1],
+                'destination_ship2': data2['destination'].iloc[-1]
+            })
+
+# Identify chains of STS operations
+# Convert STS operations to a DataFrame for better readability
+sts_df = pd.DataFrame(sts_operations)
+
+# Track chains of STS operations
+motherships = {}
+
+for _, row in sts_df.iterrows():
+    mothership = row['ship1']
+    childship = row['ship2']
+    
+    if mothership not in motherships:
+        motherships[mothership] = {'childships': set(), 'operations': []}
+    
+    motherships[mothership]['childships'].add(childship)
+    motherships[mothership]['operations'].append(row)
+
+# Example of accessing the chain for a specific mothership
+for mothership, details in motherships.items():
+    print(f"Mothership {mothership} has performed STS operations with childships {details['childships']}")
+    print("STS operations:")
+    print(pd.DataFrame(details['operations']))
+
+
+
+
+
+====================
+
 import pandas as pd
 from geopy.distance import geodesic
 from datetime import datetime, timedelta
