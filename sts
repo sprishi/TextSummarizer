@@ -1,4 +1,132 @@
 
+
+import pandas as pd
+from geopy.distance import geodesic
+from datetime import timedelta
+from scipy.spatial import cKDTree
+import numpy as np
+
+# Sample AIS data with draught and destination
+data = {
+    'timestamp': [
+        '2024-05-01 00:00:00', '2024-05-02 01:00:00', '2024-05-03 02:00:00', 
+        '2024-05-04 00:05:00', '2024-05-05 01:05:00', '2024-05-06 02:05:00',
+        '2024-05-07 03:05:00', '2024-05-08 04:05:00', '2024-05-09 05:05:00',
+        '2024-05-10 06:05:00', '2024-05-11 07:05:00', '2024-05-12 08:05:00'
+    ],
+    'MMSI': [123456789, 123456789, 123456789, 987654321, 987654321, 987654321, 
+             123456789, 123456789, 123456789, 987654321, 987654321, 987654321],
+    'latitude': [25.0, 25.1, 25.2, 25.0, 25.1, 25.2, 25.3, 25.4, 25.5, 25.6, 25.7, 25.8],
+    'longitude': [55.0, 55.1, 55.2, 55.0, 55.1, 55.2, 55.3, 55.4, 55.5, 55.6, 55.7, 55.8],
+    'speed': [3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3],
+    'heading': [90, 90, 90, 90, 90, 90, 90, 90, 90, 90, 90, 90],
+    'draught': [5.0, 5.2, 5.4, 10.0, 9.8, 9.6, 5.5, 5.6, 5.7, 9.5, 9.4, 9.3],  # Sample draught values
+    'destination': ['Port A', 'Port A', 'Port A', 'Port B', 'Port B', 'Port B', 
+                    'Port C', 'Port C', 'Port C', 'Port D', 'Port D', 'Port D']  # Sample destination values
+}
+
+# List of port coordinates (latitude, longitude)
+ports = [(25.0, 55.0), (24.5, 54.5)]  # Example port coordinates
+
+# Load data into a DataFrame
+df = pd.DataFrame(data)
+
+# Convert timestamp to datetime
+df['timestamp'] = pd.to_datetime(df['timestamp'])
+
+# Group data by ship (MMSI)
+grouped = df.groupby('MMSI')
+
+# Define a function to calculate distance between two points
+def calculate_distance(lat1, lon1, lat2, lon2):
+    return geodesic((lat1, lon1), (lat2, lon2)).meters
+
+# Define a function to check if a ship is near any port
+def is_near_port(lat, lon, ports, max_distance=1000):
+    for port in ports:
+        if calculate_distance(lat, lon, port[0], port[1]) < max_distance:
+            return True
+    return False
+
+# Create KD-Tree for spatial indexing
+coords = df[['latitude', 'longitude']].to_numpy()
+tree = cKDTree(coords)
+
+# Identify potential STS operations
+sts_operations = []
+
+# Iterate over ship pairs and find potential STS operations
+for ship1, data1 in grouped:
+    data1 = data1.sort_values(by='timestamp')
+    indices1 = data1.index
+
+    for ship2, data2 in grouped:
+        if ship1 >= ship2:  # Avoid duplicate checks and self-comparison
+            continue
+
+        data2 = data2.sort_values(by='timestamp')
+        indices2 = data2.index
+
+        # Use KD-Tree to find nearby points
+        close_pairs = tree.query_ball_point(data1[['latitude', 'longitude']].to_numpy(), r=0.5)  # 500 meters
+
+        for i, close_indices in enumerate(close_pairs):
+            if len(close_indices) == 0:
+                continue
+
+            # Filter indices for ship2
+            close_indices = [idx for idx in close_indices if idx in indices2]
+            if len(close_indices) == 0:
+                continue
+
+            row1 = data1.iloc[i]
+            window_data2 = data2.loc[close_indices]
+
+            close_ships = window_data2[
+                (abs(window_data2['speed'] - row1['speed']) < 1) &
+                (abs(window_data2['heading'] - row1['heading']) < 10) &
+                (window_data2['speed'] < 6) &
+                (~window_data2.apply(lambda row: is_near_port(row['latitude'], row['longitude'], ports), axis=1)) &
+                (~is_near_port(row1['latitude'], row1['longitude'], ports))
+            ]
+
+            if not close_ships.empty:
+                start_time = row1['timestamp']
+                end_time = close_ships['timestamp'].max()
+                total_nearby_time = end_time - start_time
+
+                start_draught_ship1 = row1['draught']
+                end_draught_ship1 = row1['draught']
+                start_draught_ship2 = close_ships['draught'].iloc[0]
+                end_draught_ship2 = close_ships['draught'].iloc[-1]
+
+                draught_change_ship1 = ((end_draught_ship1 - start_draught_ship1) / start_draught_ship1 * 100)
+                draught_change_ship2 = ((end_draught_ship2 - start_draught_ship2) / start_draught_ship2 * 100)
+
+                sts_operations.append({
+                    'ship1': ship1,
+                    'ship2': ship2,
+                    'start_time': start_time,
+                    'end_time': end_time,
+                    'total_nearby_time': total_nearby_time,
+                    'draught_change_ship1 (%)': draught_change_ship1,
+                    'draught_change_ship2 (%)': draught_change_ship2,
+                    'destination_ship1': row1['destination'],
+                    'destination_ship2': close_ships['destination'].iloc[0]
+                })
+
+# Convert STS operations to a DataFrame for better readability
+sts_df = pd.DataFrame(sts_operations)
+
+# Example of accessing the chain for a specific mothership
+for index, row in sts_df.iterrows():
+    print(f"Ship1 {row['ship1']} and Ship2 {row['ship2']} performed STS operations from {row['start_time']} to {row['end_time']}.")
+
+
+
+
+============
+
 import pandas as pd
 from geopy.distance import geodesic
 from datetime import datetime, timedelta
