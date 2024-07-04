@@ -1,3 +1,75 @@
+
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+from datetime import datetime
+
+# Assuming df is your dataframe
+# df = pd.read_csv('your_data.csv') # Replace with your data loading method
+
+# Convert eta to datetime
+df['eta'] = pd.to_datetime(df['eta'])
+
+# Add a 'decade' column
+df['decade'] = df['eta'].dt.day.apply(lambda x: 'D1' if x <= 10 else 'D2' if x <= 20 else 'D3')
+
+# Add 'week' and 'month' columns
+df['week'] = df['eta'].dt.to_period('W').apply(lambda r: r.start_time.strftime('%d-%m'))
+df['month'] = df['eta'].dt.to_period('M').apply(lambda r: r.start_time.strftime('%m-%Y'))
+
+# Add 'KBBL' and 'KBD' columns
+df['volume_kbbl'] = df['volume_kt'] * 7.5
+df['days_in_month'] = df['eta'].dt.days_in_month
+df['kbd'] = df.groupby(df['eta'].dt.to_period('M'))['volume_kbbl'].transform(lambda x: x.sum() / x.iloc[0])
+
+# Streamlit radio buttons
+show = st.radio("Show:", ["KBD", "Count", "Vol (KT)"])
+x_axis_by = st.radio("X-Axis By", ["Week", "Decade", "Month"], key='x_axis_by')
+show_vessel_class = st.checkbox("Show Vessel Class")
+
+# Hide the second radio button if 'KBD' is selected
+if show == "KBD":
+    st.session_state.x_axis_by = "Date"
+else:
+    x_axis_by = st.session_state.x_axis_by
+
+# Data manipulation for plotting
+if show == "KBD":
+    if show_vessel_class:
+        fig = px.line(df, x='eta', y='kbd', color='type_of_vessel_class', title='KBD Over Time by Vessel Class', labels={'eta': 'Date', 'kbd': 'KBD'})
+    else:
+        fig = px.line(df, x='eta', y='kbd', title='KBD Over Time', labels={'eta': 'Date', 'kbd': 'KBD'})
+elif show == "Count":
+    if x_axis_by == "Week":
+        df_count = df.groupby(['week', 'type_of_vessel_class']).size().reset_index(name='vessel_count') if show_vessel_class else df.groupby('week').size().reset_index(name='vessel_count')
+        fig = px.bar(df_count, x='week', y='vessel_count', color='type_of_vessel_class' if show_vessel_class else None, title='Vessel Count by Week', labels={'week': 'Week', 'vessel_count': 'Vessel Count'})
+    elif x_axis_by == "Decade":
+        df_count = df.groupby(['month', 'decade', 'type_of_vessel_class']).size().reset_index(name='vessel_count') if show_vessel_class else df.groupby(['month', 'decade']).size().reset_index(name='vessel_count')
+        df_count['decade'] = df_count['decade'] + '-' + df_count['month']
+        fig = px.bar(df_count, x='decade', y='vessel_count', color='type_of_vessel_class' if show_vessel_class else None, title='Vessel Count by Decade', labels={'decade': 'Decade', 'vessel_count': 'Vessel Count'})
+    elif x_axis_by == "Month":
+        df_count = df.groupby(['month', 'type_of_vessel_class']).size().reset_index(name='vessel_count') if show_vessel_class else df.groupby('month').size().reset_index(name='vessel_count')
+        fig = px.bar(df_count, x='month', y='vessel_count', color='type_of_vessel_class' if show_vessel_class else None, title='Vessel Count by Month', labels={'month': 'Month', 'vessel_count': 'Vessel Count'})
+elif show == "Vol (KT)":
+    if x_axis_by == "Week":
+        df_vol = df.groupby(['week', 'type_of_vessel_class'])['volume_kt'].sum().reset_index() if show_vessel_class else df.groupby('week')['volume_kt'].sum().reset_index()
+        fig = px.bar(df_vol, x='week', y='volume_kt', color='type_of_vessel_class' if show_vessel_class else None, title='Vessel Volume by Week', labels={'week': 'Week', 'volume_kt': 'Vessel Volume (KT)'})
+    elif x_axis_by == "Decade":
+        df_vol = df.groupby(['month', 'decade', 'type_of_vessel_class'])['volume_kt'].sum().reset_index() if show_vessel_class else df.groupby(['month', 'decade'])['volume_kt'].sum().reset_index()
+        df_vol['decade'] = df_vol['decade'] + '-' + df_vol['month']
+        fig = px.bar(df_vol, x='decade', y='volume_kt', color='type_of_vessel_class' if show_vessel_class else None, title='Vessel Volume by Decade', labels={'decade': 'Decade', 'volume_kt': 'Vessel Volume (KT)'})
+    elif x_axis_by == "Month":
+        df_vol = df.groupby(['month', 'type_of_vessel_class'])['volume_kt'].sum().reset_index() if show_vessel_class else df.groupby('month')['volume_kt'].sum().reset_index()
+        fig = px.bar(df_vol, x='month', y='volume_kt', color='type_of_vessel_class' if show_vessel_class else None, title='Vessel Volume by Month', labels={'month': 'Month', 'volume_kt': 'Vessel Volume (KT)'})
+
+# Show the plot
+st.plotly_chart(fig)
+
+
+
+
+================================================================================
+
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import explode, array, lit, struct, monotonically_increasing_id, min
 from pyspark.sql.window import Window
