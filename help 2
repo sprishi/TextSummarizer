@@ -35,32 +35,32 @@ else:
 
 # Data manipulation for plotting
 if show == "KBD":
-    if show_vessel_class:
-        fig = px.line(df, x='eta', y='kbd', color='type_of_vessel_class', title='KBD Over Time by Vessel Class', labels={'eta': 'Date', 'kbd': 'KBD'})
+    if by_type:
+        fig = px.line(df, x='eta', y='kbd', color='type', title='KBD Over Time by Vessel Class', labels={'eta': 'Date', 'kbd': 'KBD'})
     else:
         fig = px.line(df, x='eta', y='kbd', title='KBD Over Time', labels={'eta': 'Date', 'kbd': 'KBD'})
 elif show == "Count":
     if x_axis_by == "Week":
-        df_count = df.groupby(['week', 'type_of_vessel_class']).size().reset_index(name='vessel_count') if show_vessel_class else df.groupby('week').size().reset_index(name='vessel_count')
-        fig = px.bar(df_count, x='week', y='vessel_count', color='type_of_vessel_class' if show_vessel_class else None, title='Vessel Count by Week', labels={'week': 'Week', 'vessel_count': 'Vessel Count'})
+        df_count = df.groupby(['week', 'type' if by_type else None]).size().reset_index(name='vessel_count')
+        fig = px.bar(df_count, x='week', y='vessel_count', color='type' if by_type else None, title='Vessel Count by Week', labels={'week': 'Week', 'vessel_count': 'Vessel Count'})
     elif x_axis_by == "Decade":
-        df_count = df.groupby(['month', 'decade', 'type_of_vessel_class']).size().reset_index(name='vessel_count') if show_vessel_class else df.groupby(['month', 'decade']).size().reset_index(name='vessel_count')
+        df_count = df.groupby(['month', 'decade', 'type' if by_type else None]).size().reset_index(name='vessel_count')
         df_count['decade'] = df_count['decade'] + '-' + df_count['month']
-        fig = px.bar(df_count, x='decade', y='vessel_count', color='type_of_vessel_class' if show_vessel_class else None, title='Vessel Count by Decade', labels={'decade': 'Decade', 'vessel_count': 'Vessel Count'})
+        fig = px.bar(df_count, x='decade', y='vessel_count', color='type' if by_type else None, title='Vessel Count by Decade', labels={'decade': 'Decade', 'vessel_count': 'Vessel Count'})
     elif x_axis_by == "Month":
-        df_count = df.groupby(['month', 'type_of_vessel_class']).size().reset_index(name='vessel_count') if show_vessel_class else df.groupby('month').size().reset_index(name='vessel_count')
-        fig = px.bar(df_count, x='month', y='vessel_count', color='type_of_vessel_class' if show_vessel_class else None, title='Vessel Count by Month', labels={'month': 'Month', 'vessel_count': 'Vessel Count'})
+        df_count = df.groupby(['month', 'type' if by_type else None]).size().reset_index(name='vessel_count')
+        fig = px.bar(df_count, x='month', y='vessel_count', color='type' if by_type else None, title='Vessel Count by Month', labels={'month': 'Month', 'vessel_count': 'Vessel Count'})
 elif show == "Vol (KT)":
     if x_axis_by == "Week":
-        df_vol = df.groupby(['week', 'type_of_vessel_class'])['volume_kt'].sum().reset_index() if show_vessel_class else df.groupby('week')['volume_kt'].sum().reset_index()
-        fig = px.bar(df_vol, x='week', y='volume_kt', color='type_of_vessel_class' if show_vessel_class else None, title='Vessel Volume by Week', labels={'week': 'Week', 'volume_kt': 'Vessel Volume (KT)'})
+        df_vol = df.groupby(['week', 'type' if by_type else None])['volume_kt'].sum().reset_index()
+        fig = px.bar(df_vol, x='week', y='volume_kt', color='type' if by_type else None, title='Vessel Volume by Week', labels={'week': 'Week', 'volume_kt': 'Vessel Volume (KT)'})
     elif x_axis_by == "Decade":
-        df_vol = df.groupby(['month', 'decade', 'type_of_vessel_class'])['volume_kt'].sum().reset_index() if show_vessel_class else df.groupby(['month', 'decade'])['volume_kt'].sum().reset_index()
+        df_vol = df.groupby(['month', 'decade', 'type' if by_type else None])['volume_kt'].sum().reset_index()
         df_vol['decade'] = df_vol['decade'] + '-' + df_vol['month']
-        fig = px.bar(df_vol, x='decade', y='volume_kt', color='type_of_vessel_class' if show_vessel_class else None, title='Vessel Volume by Decade', labels={'decade': 'Decade', 'volume_kt': 'Vessel Volume (KT)'})
+        fig = px.bar(df_vol, x='decade', y='volume_kt', color='type' if by_type else None, title='Vessel Volume by Decade', labels={'decade': 'Decade', 'volume_kt': 'Vessel Volume (KT)'})
     elif x_axis_by == "Month":
-        df_vol = df.groupby(['month', 'type_of_vessel_class'])['volume_kt'].sum().reset_index() if show_vessel_class else df.groupby('month')['volume_kt'].sum().reset_index()
-        fig = px.bar(df_vol, x='month', y='volume_kt', color='type_of_vessel_class' if show_vessel_class else None, title='Vessel Volume by Month', labels={'month': 'Month', 'volume_kt': 'Vessel Volume (KT)'})
+        df_vol = df.groupby(['month', 'type' if by_type else None])['volume_kt'].sum().reset_index()
+        fig = px.bar(df_vol, x='month', y='volume_kt', color='type' if by_type else None, title='Vessel Volume by Month', labels={'month': 'Month', 'volume_kt': 'Vessel Volume (KT)'})
 
 # Show the plot
 st.plotly_chart(fig)
