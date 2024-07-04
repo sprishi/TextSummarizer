@@ -17,43 +17,32 @@ def adf_test(series, name=''):
         print(f'   {key}, {value}')
     return result[1]  # Return p-value
 
-# Check stationarity for each column
-p_values = {}
-for column in ratio_data.columns:
-    p_value = adf_test(ratio_data[column].dropna(), name=column)  # .dropna() to handle initial NaNs if any
-    p_values[column] = p_value
+# Function to difference the series
+def difference_series(series):
+    return series.diff().dropna()
 
-# Check if differencing is needed
+# Initialize differencing information
 differenced_data = ratio_data.copy()
-differencing_applied = {}
-for column, p_value in p_values.items():
-    if p_value > 0.05:  # Non-stationary series
-        differenced_data[column] = ratio_data[column].diff().dropna()
-        differencing_applied[column] = True
-    else:
-        differencing_applied[column] = False
+differencing_counts = {col: 0 for col in ratio_data.columns}
 
-# Re-test stationarity after differencing
-differenced_p_values = {}
-for column in differenced_data.columns:
-    p_value = adf_test(differenced_data[column].dropna(), name=f'Differenced {column}')
-    differenced_p_values[column] = p_value
+# Check stationarity and apply differencing until stationary
+max_differencing = 5  # Maximum number of differencing to prevent infinite loop
+for _ in range(max_differencing):
+    p_values = {col: adf_test(differenced_data[col].dropna(), name=col) for col in differenced_data.columns}
+    still_non_stationary = [col for col, p_value in p_values.items() if p_value > 0.05]
+    
+    if not still_non_stationary:
+        break  # Exit loop if all series are stationary
+    
+    for col in still_non_stationary:
+        differenced_data[col] = difference_series(differenced_data[col])
+        differencing_counts[col] += 1
 
-# Check if second differencing is needed
-second_differenced_data = differenced_data.copy()
-second_differencing_applied = {}
-for column, p_value in differenced_p_values.items():
-    if p_value > 0.05:  # Still non-stationary series after first differencing
-        second_differenced_data[column] = differenced_data[column].diff().dropna()
-        second_differencing_applied[column] = True
-    else:
-        second_differencing_applied[column] = False
-
-# Ensure second_differenced_data is correctly aligned after second differencing
-second_differenced_data = second_differenced_data.dropna()
+# Ensure differenced_data is correctly aligned after differencing
+differenced_data = differenced_data.dropna()
 
 # Fit the VAR model with stationary data up to June 2024
-model = VAR(second_differenced_data)
+model = VAR(differenced_data)
 results = model.select_order(maxlags=15)
 selected_order = results.aic
 print(f"Selected order: {selected_order}")
@@ -63,18 +52,23 @@ print(model_fitted.summary())
 
 # Forecasting the future values for the next 18 months
 forecast_steps = 18
-forecast = model_fitted.forecast(second_differenced_data.values[-selected_order:], steps=forecast_steps)
+forecast = model_fitted.forecast(differenced_data.values[-selected_order:], steps=forecast_steps)
 
 # Convert forecast to DataFrame
-forecast_dates = pd.date_range(start=second_differenced_data.index[-1] + pd.offsets.MonthBegin(), periods=forecast_steps, freq='MS')
+forecast_dates = pd.date_range(start=differenced_data.index[-1] + pd.offsets.MonthBegin(), periods=forecast_steps, freq='MS')
 forecast_df = pd.DataFrame(forecast, index=forecast_dates, columns=ratio_data.columns)
 
-# Reverse differencing if applied
+# Reverse differencing
+def reverse_difference(series, initial_value, n_diffs):
+    result = series.copy()
+    for _ in range(n_diffs):
+        result = initial_value + result.cumsum()
+        initial_value = series.iloc[0]
+    return result
+
 for column in forecast_df.columns:
-    if second_differencing_applied[column]:
-        forecast_df[column] = differenced_data[column].iloc[-1] + forecast_df[column].cumsum()
-    elif differencing_applied[column]:
-        forecast_df[column] = ratio_data[column].iloc[-1] + forecast_df[column].cumsum()
+    if differencing_counts[column] > 0:
+        forecast_df[column] = reverse_difference(forecast_df[column], ratio_data[column].iloc[-1], differencing_counts[column])
 
 # Concatenate the actual and forecasted data for visualization
 combined_df = pd.concat([ratio_data, forecast_df], axis=0)
@@ -90,6 +84,7 @@ plt.xlabel('Date')
 plt.ylabel('Ratios')
 plt.legend()
 plt.show()
+
 
 
 
