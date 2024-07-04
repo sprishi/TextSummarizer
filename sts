@@ -39,11 +39,21 @@ for column in differenced_data.columns:
     p_value = adf_test(differenced_data[column].dropna(), name=f'Differenced {column}')
     differenced_p_values[column] = p_value
 
-# Ensure differenced_data is correctly aligned after differencing
-differenced_data = differenced_data.dropna()
+# Check if second differencing is needed
+second_differenced_data = differenced_data.copy()
+second_differencing_applied = {}
+for column, p_value in differenced_p_values.items():
+    if p_value > 0.05:  # Still non-stationary series after first differencing
+        second_differenced_data[column] = differenced_data[column].diff().dropna()
+        second_differencing_applied[column] = True
+    else:
+        second_differencing_applied[column] = False
+
+# Ensure second_differenced_data is correctly aligned after second differencing
+second_differenced_data = second_differenced_data.dropna()
 
 # Fit the VAR model with stationary data up to June 2024
-model = VAR(differenced_data)
+model = VAR(second_differenced_data)
 results = model.select_order(maxlags=15)
 selected_order = results.aic
 print(f"Selected order: {selected_order}")
@@ -53,15 +63,17 @@ print(model_fitted.summary())
 
 # Forecasting the future values for the next 18 months
 forecast_steps = 18
-forecast = model_fitted.forecast(differenced_data.values[-selected_order:], steps=forecast_steps)
+forecast = model_fitted.forecast(second_differenced_data.values[-selected_order:], steps=forecast_steps)
 
 # Convert forecast to DataFrame
-forecast_dates = pd.date_range(start=differenced_data.index[-1] + pd.offsets.MonthBegin(), periods=forecast_steps, freq='MS')
+forecast_dates = pd.date_range(start=second_differenced_data.index[-1] + pd.offsets.MonthBegin(), periods=forecast_steps, freq='MS')
 forecast_df = pd.DataFrame(forecast, index=forecast_dates, columns=ratio_data.columns)
 
 # Reverse differencing if applied
 for column in forecast_df.columns:
-    if differencing_applied[column]:
+    if second_differencing_applied[column]:
+        forecast_df[column] = differenced_data[column].iloc[-1] + forecast_df[column].cumsum()
+    elif differencing_applied[column]:
         forecast_df[column] = ratio_data[column].iloc[-1] + forecast_df[column].cumsum()
 
 # Concatenate the actual and forecasted data for visualization
@@ -78,6 +90,7 @@ plt.xlabel('Date')
 plt.ylabel('Ratios')
 plt.legend()
 plt.show()
+
 
 
 
