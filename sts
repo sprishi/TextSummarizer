@@ -1,80 +1,84 @@
-
 import pandas as pd
 import numpy as np
-from statsmodels.tsa.api import VAR
 from statsmodels.tsa.stattools import adfuller
-from statsmodels.tools.eval_measures import rmse, aic
+from statsmodels.tsa.api import VAR
+import matplotlib.pyplot as plt
 
-def difference(data, interval=1):
-    return data.diff(interval).dropna()
+# Assume your data is already loaded into a DataFrame 'data'
+ratio_data = data[['Aframax', 'Suezmax', 'VLCC']]
 
-def inverse_difference(last_ob, diff_series, interval=1):
-    return pd.Series(last_ob) + diff_series.cumsum()
+# Function to perform ADF test
+def adf_test(series, name=''):
+    result = adfuller(series, autolag='AIC')
+    print(f'ADF Statistic for {name}: {result[0]}')
+    print(f'p-value for {name}: {result[1]}')
+    print('Critical Values:')
+    for key, value in result[4].items():
+        print(f'   {key}, {value}')
+    return result[1]  # Return p-value
 
-def test_stationarity(series):
-    result = adfuller(series)
-    return result[1] <= 0.05  # p-value
+# Check stationarity for each column
+p_values = {}
+for column in ratio_data.columns:
+    p_value = adf_test(ratio_data[column].dropna(), name=column)  # .dropna() to handle initial NaNs if any
+    p_values[column] = p_value
 
-def prepare_data(data):
-    # Check stationarity and difference if necessary
-    for column in data.columns:
-        if not test_stationarity(data[column]):
-            data[column] = difference(data[column])
-            print(f"{column} was differenced to achieve stationarity")
-    return data.dropna()
+# Check if differencing is needed
+differenced_data = ratio_data.copy()
+differencing_applied = {}
+for column, p_value in p_values.items():
+    if p_value > 0.05:  # Non-stationary series
+        differenced_data[column] = ratio_data[column].diff().dropna()
+        differencing_applied[column] = True
+    else:
+        differencing_applied[column] = False
 
-# Assuming 'data' is your DataFrame with historical ratios
-data = pd.DataFrame({
-    'ratio1': data['ratio1'],
-    'ratio2': data['ratio2'],
-    'ratio3': data['ratio3']
-})
+# Re-test stationarity after differencing
+differenced_p_values = {}
+for column in differenced_data.columns:
+    p_value = adf_test(differenced_data[column].dropna(), name=f'Differenced {column}')
+    differenced_p_values[column] = p_value
 
-# Prepare the data
-stationary_data = prepare_data(data)
+# Ensure differenced_data is correctly aligned after differencing
+differenced_data = differenced_data.dropna()
 
-# Fit VAR model
-model = VAR(stationary_data)
+# Fit the VAR model with stationary data up to June 2024
+model = VAR(differenced_data)
+results = model.select_order(maxlags=15)
+selected_order = results.aic
+print(f"Selected order: {selected_order}")
 
-# Select order (p) based on AIC
-order = model.select_order(maxlags=12)
-print(f"Selected order: {order}")
+model_fitted = model.fit(selected_order)
+print(model_fitted.summary())
 
-# Fit the model with the selected order
-results = model.fit(order)
+# Forecasting the future values for the next 18 months
+forecast_steps = 18
+forecast = model_fitted.forecast(differenced_data.values[-selected_order:], steps=forecast_steps)
 
-# Generate forecasts
-forecast_periods = 18  # Jul 2024 to Dec 2025
-forecast = results.forecast(stationary_data.values[-order:], steps=forecast_periods)
+# Convert forecast to DataFrame
+forecast_dates = pd.date_range(start=differenced_data.index[-1] + pd.offsets.MonthBegin(), periods=forecast_steps, freq='MS')
+forecast_df = pd.DataFrame(forecast, index=forecast_dates, columns=ratio_data.columns)
 
-# If data was differenced, inverse transform the forecasts
-last_obs = data.iloc[-1]
-for i, column in enumerate(data.columns):
-    if not test_stationarity(data[column]):
-        forecast[:, i] = inverse_difference(last_obs[column], pd.Series(forecast[:, i]))
+# Reverse differencing if applied
+for column in forecast_df.columns:
+    if differencing_applied[column]:
+        forecast_df[column] = ratio_data[column].iloc[-1] + forecast_df[column].cumsum()
 
-# Create DataFrame with forecasts
-forecast_df = pd.DataFrame(forecast, columns=data.columns)
+# Concatenate the actual and forecasted data for visualization
+combined_df = pd.concat([ratio_data, forecast_df], axis=0)
 
-# Normalize forecasts to ensure they sum to 100
-forecast_df['total'] = forecast_df.sum(axis=1)
-normalized_forecast = forecast_df.div(forecast_df['total'], axis=0).mul(100)
+# Plot the forecasted ratios
+plt.figure(figsize=(14, 7))
+for column in combined_df.columns:
+    plt.plot(combined_df.index, combined_df[column], label=f'{column} (Forecast)')
+    plt.plot(ratio_data.index, ratio_data[column], label=f'{column} (Actual)', linestyle='--')
 
-print("\nNormalized Forecasts:")
-print(normalized_forecast)
+plt.title('Forecasted vs Actual Vessel Class Ratios')
+plt.xlabel('Date')
+plt.ylabel('Ratios')
+plt.legend()
+plt.show()
 
-# Calculate and print model diagnostics
-print("\nModel Summary:")
-print(results.summary())
-
-print("\nModel Diagnostics:")
-print(f"AIC: {results.aic}")
-print(f"BIC: {results.bic}")
-
-residuals = results.resid
-print("\nRMSE for each series:")
-for i, column in enumerate(data.columns):
-    print(f"{column}: {rmse(data[column].iloc[order:], data[column].iloc[order:] - residuals[:, i])}")
 
 
 -------
