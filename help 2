@@ -6,20 +6,24 @@ from plotly.subplots import make_subplots
 
 # Assuming your DataFrame is named 'df'
 # Ensure 'Report Date' is in datetime format
-df['Report Date'] = pd.to_datetime(df['Report Date'])
-
-# Function to prepare data for a specific vessel type
-def prepare_data(df, vessel_type):
-    df_vessel = df[df['Sub-Sub-Type'] == vessel_type].copy()
-    df_vessel = df_vessel.sort_values('Report Date')
+df_vessel = df_vessel.sort_values('Report Date')
     
-    df_vessel['Cumulative Count'] = range(1, len(df_vessel) + 1)
-    df_vessel['Cumulative Scrubber'] = (df_vessel['Scrubber Fitted'] == 'Yes').cumsum()
-    df_vessel['Cumulative USG 15'] = ((df_vessel['Destination Zone'] == 'USG') & (df_vessel['Availability'] == 15)).cumsum()
-    df_vessel['Cumulative USG 30'] = ((df_vessel['Destination Zone'] == 'USG') & (df_vessel['Availability'] == 30)).cumsum()
-    df_vessel['Cumulative Free Capacity'] = df_vessel['Free Capacity'].cumsum()
+    # Group by Report Date and calculate cumulative counts for each date
+    daily_counts = df_vessel.groupby('Report Date').agg({
+        'IMO': 'count',
+        'Scrubber Fitted': lambda x: (x == 'Yes').sum(),
+        'Destination Zone': lambda x: ((x == 'USG') & (df_vessel.loc[x.index, 'Availability'] == 15)).sum(),
+        'Free Capacity': 'sum'
+    }).reset_index()
     
-    return df_vessel
+    daily_counts.columns = ['Report Date', 'Cumulative Count', 'Cumulative Scrubber', 'Cumulative USG 15', 'Cumulative Free Capacity']
+    
+    # Calculate Cumulative USG 30
+    daily_counts['Cumulative USG 30'] = df_vessel.groupby('Report Date').apply(
+        lambda x: ((x['Destination Zone'] == 'USG') & (x['Availability'] == 30)).sum()
+    ).values
+    
+    return daily_counts
 
 # Prepare data for each vessel type
 df_afra = prepare_data(df, 'Aframax')
