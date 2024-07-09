@@ -1,4 +1,58 @@
 
+import streamlit as st
+import os
+
+# Define user roles and their accessible pages
+user_roles = {
+    "admin": ["Home", "Analytics", "Settings", "Users"],
+    "manager": ["Home", "Analytics", "Settings"],
+    "user": ["Home", "Analytics"]
+}
+
+def login(username, password):
+    # Replace this with your actual authentication logic
+    valid_users = {
+        "admin": "admin_pass",
+        "manager": "manager_pass",
+        "user": "user_pass"
+    }
+    return username in valid_users and valid_users[username] == password
+
+def main():
+    if 'logged_in' not in st.session_state:
+        st.session_state.logged_in = False
+    
+    if not st.session_state.logged_in:
+        st.title("Login")
+        username = st.text_input("Username")
+        password = st.text_input("Password", type="password")
+        if st.button("Login"):
+            if login(username, password):
+                st.session_state.logged_in = True
+                st.session_state.username = username
+                st.experimental_rerun()
+            else:
+                st.error("Invalid username or password")
+    else:
+        # Display only the pages the user has access to
+        st.sidebar.title(f"Welcome, {st.session_state.username}")
+        accessible_pages = user_roles.get(st.session_state.username, [])
+        
+        for page in accessible_pages:
+            if st.sidebar.button(page):
+                # Here you would navigate to the selected page
+                st.title(f"{page} Page")
+                
+        if st.sidebar.button("Logout"):
+            st.session_state.logged_in = False
+            st.experimental_rerun()
+
+if __name__ == "__main__":
+    main()
+
+
+====================================
+
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
