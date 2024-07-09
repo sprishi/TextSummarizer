@@ -34,19 +34,30 @@ df_all = prepare_data(df, None)  # All vessel types
 # Create the figure
 fig = make_subplots(specs=[[{"secondary_y": True}]])
 
-# Function to add traces for a specific vessel type
 def add_traces(fig, df, name):
-    fig.add_trace(go.Scatter(x=df['Report Date'], y=df['Cumulative Count'], name=f'{name} Total', line=dict(color='blue')))
-    fig.add_trace(go.Scatter(x=df['Report Date'], y=df['Cumulative Scrubber'], name=f'{name} Scrubber', line=dict(color='green')))
-    fig.add_trace(go.Scatter(x=df['Report Date'], y=df['Cumulative USG 15'], name=f'{name} USG 15', line=dict(color='red')))
-    fig.add_trace(go.Scatter(x=df['Report Date'], y=df['Cumulative USG 30'], name=f'{name} USG 30', line=dict(color='orange')))
-    fig.add_trace(go.Bar(x=df['Report Date'], y=df['Cumulative Free Capacity'], name=f'{name} Free Capacity', opacity=0.3), secondary_y=True)
+    fig.add_trace(go.Scatter(x=df['Report Date'], y=df['Cumulative Count'], name=f'{name} Total', line=dict(color='blue'), visible=name=='All'))
+    fig.add_trace(go.Scatter(x=df['Report Date'], y=df['Cumulative Scrubber'], name=f'{name} Scrubber', line=dict(color='green'), visible=name=='All'))
+    fig.add_trace(go.Scatter(x=df['Report Date'], y=df['Cumulative USG 15'], name=f'{name} USG 15', line=dict(color='red'), visible=name=='All'))
+    fig.add_trace(go.Scatter(x=df['Report Date'], y=df['Cumulative USG 30'], name=f'{name} USG 30', line=dict(color='orange'), visible=name=='All'))
+    fig.add_trace(go.Bar(x=df['Report Date'], y=df['Cumulative Free Capacity'], name=f'{name} Free Capacity', opacity=0.3, visible=name=='All'), secondary_y=True)
 
-# Add traces for each vessel type
+# Add traces for each vessel type and all combined
+add_traces(fig, df_all, 'All')
 add_traces(fig, df_afra, 'Aframax')
 add_traces(fig, df_suez, 'Suezmax')
 add_traces(fig, df_vlcc, 'VLCC')
-add_traces(fig, df_all, 'All')
+
+# Function to update trace visibility and names
+def update_traces(vessel_type):
+    visibility = [False] * len(fig.data)
+    new_names = []
+    for i, trace in enumerate(fig.data):
+        if vessel_type in trace.name:
+            visibility[i] = True
+            new_names.append(trace.name.replace(f"{vessel_type} ", ""))
+        else:
+            new_names.append(trace.name)
+    return dict(visible=visibility), [dict(name=name) for name in new_names]
 
 # Update layout
 fig.update_layout(
@@ -58,10 +69,14 @@ fig.update_layout(
     updatemenus=[
         dict(
             buttons=list([
-                dict(label="All", method="update", args=[{"visible": [True] * 20}]),
-                dict(label="Aframax", method="update", args=[{"visible": [True] * 5 + [False] * 15}]),
-                dict(label="Suezmax", method="update", args=[{"visible": [False] * 5 + [True] * 5 + [False] * 10}]),
-                dict(label="VLCC", method="update", args=[{"visible": [False] * 10 + [True] * 5 + [False] * 5}]),
+                dict(label="All", method="update", 
+                     args=update_traces('All')),
+                dict(label="Aframax", method="update", 
+                     args=update_traces('Aframax')),
+                dict(label="Suezmax", method="update", 
+                     args=update_traces('Suezmax')),
+                dict(label="VLCC", method="update", 
+                     args=update_traces('VLCC')),
             ]),
             direction="down",
             pad={"r": 10, "t": 10},
