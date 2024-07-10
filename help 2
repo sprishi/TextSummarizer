@@ -1,18 +1,15 @@
 
 import streamlit as st
-import os
+from pages import home, admin_dashboard, user_management, profile, reports, about
 
-import streamlit as st
-import importlib
-
-# Define all pages once
+# Define all pages
 all_pages = {
-    'home': ('pages/home.py', 'Home'),
-    'admin_dashboard': ('pages/admin_dashboard.py', 'Admin Dashboard'),
-    'user_management': ('pages/user_management.py', 'User Management'),
-    'profile': ('pages/profile.py', 'Profile'),
-    'reports': ('pages/reports.py', 'Reports'),
-    'about': ('pages/about.py', 'About')
+    'home': ('Home', home.show),
+    'admin_dashboard': ('Admin Dashboard', admin_dashboard.show),
+    'user_management': ('User Management', user_management.show),
+    'profile': ('Profile', profile.show),
+    'reports': ('Reports', reports.show),
+    'about': ('About', about.show)
 }
 
 # Define user roles and their accessible pages
@@ -33,21 +30,16 @@ def login(username, password):
 def show_navigation(role):
     st.sidebar.title("Navigation")
     for page_key in user_roles[role]:
-        page_path, page_name = all_pages[page_key]
-        if st.sidebar.button(page_name):
-            st.session_state.current_page = page_path
-
-def load_page(page_path):
-    module_name = page_path.replace('/', '.').replace('.py', '')
-    page_module = importlib.import_module(module_name)
-    page_module.main()
+        page_name, _ = all_pages[page_key]
+        if st.sidebar.button(page_name, key=f"nav_{page_key}"):
+            st.session_state.current_page = page_key
 
 def main():
     if 'logged_in' not in st.session_state:
         st.session_state.logged_in = False
     
     if 'current_page' not in st.session_state:
-        st.session_state.current_page = all_pages['home'][0]
+        st.session_state.current_page = 'home'
 
     if not st.session_state.logged_in:
         username = st.text_input("Username")
@@ -63,16 +55,17 @@ def main():
                 st.error("Invalid username or password")
     else:
         show_navigation(st.session_state.role)
-        load_page(st.session_state.current_page)
+        
+        # Display the current page
+        page_name, page_function = all_pages[st.session_state.current_page]
+        page_function()
         
         if st.sidebar.button("Logout"):
             st.session_state.logged_in = False
             st.session_state.role = None
-            st.session_state.current_page = all_pages['home'][0]
+            st.session_state.current_page = 'home'
             st.experimental_rerun()
 
-if __name__ == "__main__":
-    main()
 if __name__ == "__main__":
     main()
 
