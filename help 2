@@ -2,51 +2,77 @@
 import streamlit as st
 import os
 
+import streamlit as st
+import importlib
+
+# Define all pages once
+all_pages = {
+    'home': ('pages/home.py', 'Home'),
+    'admin_dashboard': ('pages/admin_dashboard.py', 'Admin Dashboard'),
+    'user_management': ('pages/user_management.py', 'User Management'),
+    'profile': ('pages/profile.py', 'Profile'),
+    'reports': ('pages/reports.py', 'Reports'),
+    'about': ('pages/about.py', 'About')
+}
+
 # Define user roles and their accessible pages
 user_roles = {
-    "admin": ["Home", "Analytics", "Settings", "Users"],
-    "manager": ["Home", "Analytics", "Settings"],
-    "user": ["Home", "Analytics"]
+    'admin': ['home', 'admin_dashboard', 'user_management'],
+    'user': ['home', 'profile', 'reports'],
+    'guest': ['home', 'about']
 }
 
 def login(username, password):
     # Replace this with your actual authentication logic
-    valid_users = {
-        "admin": "admin_pass",
-        "manager": "manager_pass",
-        "user": "user_pass"
-    }
-    return username in valid_users and valid_users[username] == password
+    if username == 'admin' and password == 'admin_pass':
+        return 'admin'
+    elif username == 'user' and password == 'user_pass':
+        return 'user'
+    return None
+
+def show_navigation(role):
+    st.sidebar.title("Navigation")
+    for page_key in user_roles[role]:
+        page_path, page_name = all_pages[page_key]
+        if st.sidebar.button(page_name):
+            st.session_state.current_page = page_path
+
+def load_page(page_path):
+    module_name = page_path.replace('/', '.').replace('.py', '')
+    page_module = importlib.import_module(module_name)
+    page_module.main()
 
 def main():
     if 'logged_in' not in st.session_state:
         st.session_state.logged_in = False
     
+    if 'current_page' not in st.session_state:
+        st.session_state.current_page = all_pages['home'][0]
+
     if not st.session_state.logged_in:
-        st.title("Login")
         username = st.text_input("Username")
         password = st.text_input("Password", type="password")
         if st.button("Login"):
-            if login(username, password):
+            role = login(username, password)
+            if role:
                 st.session_state.logged_in = True
-                st.session_state.username = username
+                st.session_state.role = role
+                st.success("Logged in successfully!")
                 st.experimental_rerun()
             else:
                 st.error("Invalid username or password")
     else:
-        # Display only the pages the user has access to
-        st.sidebar.title(f"Welcome, {st.session_state.username}")
-        accessible_pages = user_roles.get(st.session_state.username, [])
+        show_navigation(st.session_state.role)
+        load_page(st.session_state.current_page)
         
-        for page in accessible_pages:
-            if st.sidebar.button(page):
-                # Here you would navigate to the selected page
-                st.title(f"{page} Page")
-                
         if st.sidebar.button("Logout"):
             st.session_state.logged_in = False
+            st.session_state.role = None
+            st.session_state.current_page = all_pages['home'][0]
             st.experimental_rerun()
 
+if __name__ == "__main__":
+    main()
 if __name__ == "__main__":
     main()
 
