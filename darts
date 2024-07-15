@@ -1,0 +1,55 @@
+import pandas as pd
+from darts import TimeSeries
+from darts.models import StatsForecastAutoETS, StatsForecastAutoARIMA, VARIMA
+from darts.metrics import mape, rmse
+
+# Assuming your DataFrame is named 'df'
+# Convert DataFrame to Darts TimeSeries
+series = TimeSeries.from_dataframe(df)
+
+# Split the data
+train, test = series.split_before(pd.Timestamp('2023-07-01'))
+
+# Initialize models
+models = [
+    StatsForecastAutoETS(),
+    StatsForecastAutoARIMA(),
+    VARIMA()
+]
+
+# Train models and make predictions
+predictions = {}
+for model in models:
+    model.fit(train)
+    pred = model.predict(len(test))
+    predictions[type(model).__name__] = pred
+
+# Calculate accuracies
+accuracies = {}
+for model_name, pred in predictions.items():
+    accuracies[model_name] = {
+        'MAPE': mape(test, pred),
+        'RMSE': rmse(test, pred)
+    }
+
+# Print accuracies
+for model_name, metrics in accuracies.items():
+    print(f"{model_name}:")
+    for metric, values in metrics.items():
+        print(f"  {metric}:")
+        for column, value in zip(df.columns, values):
+            print(f"    {column}: {value:.4f}")
+    print()
+
+# Select the best model (you can modify this based on your preference)
+best_model = min(accuracies, key=lambda x: sum(accuracies[x]['MAPE']))
+
+print(f"Best model based on average MAPE: {best_model}")
+
+# Re-train on the whole dataset and forecast next 3 months with the best model
+best_model_instance = next(model for model in models if type(model).__name__ == best_model)
+best_model_instance.fit(series)
+forecast = best_model_instance.predict(3)
+
+print("Forecast for the next 3 months:")
+print(forecast)
