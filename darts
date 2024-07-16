@@ -127,6 +127,43 @@ arima_pred_aframax = scalers['Aframax'].inverse_transform(scaled_arima_pred_afra
 arima_pred_suezmax = scalers['Suezmax'].inverse_transform(scaled_arima_pred_suezmax.values())
 arima_pred_vlcc = scalers['VLCC'].inverse_transform(scaled_arima_pred_vlcc.values())
 
+#---------->>>>>
+from darts import TimeSeries
+from darts.metrics import rmse, mape
+import pandas as pd
+
+# Assuming ets_pred_aframax, ets_pred_suezmax, ets_pred_vlcc, arima_pred_aframax, arima_pred_suezmax, arima_pred_vlcc
+# are numpy arrays obtained after inverse transforming the scaled predictions
+
+# Convert numpy arrays back to TimeSeries
+ets_pred_aframax_series = TimeSeries.from_times_and_values(test_aframax.time_index, ets_pred_aframax)
+ets_pred_suezmax_series = TimeSeries.from_times_and_values(test_suezmax.time_index, ets_pred_suezmax)
+ets_pred_vlcc_series = TimeSeries.from_times_and_values(test_vlcc.time_index, ets_pred_vlcc)
+
+arima_pred_aframax_series = TimeSeries.from_times_and_values(test_aframax.time_index, arima_pred_aframax)
+arima_pred_suezmax_series = TimeSeries.from_times_and_values(test_suezmax.time_index, arima_pred_suezmax)
+arima_pred_vlcc_series = TimeSeries.from_times_and_values(test_vlcc.time_index, arima_pred_vlcc)
+
+# Calculate accuracy metrics for ETS
+ets_rmse_aframax = rmse(test_aframax, ets_pred_aframax_series)
+ets_rmse_suezmax = rmse(test_suezmax, ets_pred_suezmax_series)
+ets_rmse_vlcc = rmse(test_vlcc, ets_pred_vlcc_series)
+
+ets_mape_aframax = mape(test_aframax, ets_pred_aframax_series)
+ets_mape_suezmax = mape(test_suezmax, ets_pred_suezmax_series)
+ets_mape_vlcc = mape(test_vlcc, ets_pred_vlcc_series)
+
+# Calculate accuracy metrics for ARIMA
+arima_rmse_aframax = rmse(test_aframax, arima_pred_aframax_series)
+arima_rmse_suezmax = rmse(test_suezmax, arima_pred_suezmax_series)
+arima_rmse_vlcc = rmse(test_vlcc, arima_pred_vlcc_series)
+
+arima_mape_aframax = mape(test_aframax, arima_pred_aframax_series)
+arima_mape_suezmax = mape(test_suezmax, arima_pred_suezmax_series)
+arima_mape_vlcc = mape(test_vlcc, arima_pred_vlcc_series)
+
+#---------->>>>>
+
 from darts.metrics import rmse, mape
 
 # Calculate accuracy metrics for ETS
