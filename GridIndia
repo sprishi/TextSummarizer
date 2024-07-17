@@ -1,0 +1,164 @@
+pip install requests PyPDF2 pandas PyMuPDF pdfplumber
+
+import requests
+import PyPDF2
+import pandas as pd
+import fitz
+from datetime import datetime, timedelta
+import io
+import pdfplumber
+import re
+
+def generate_dates(start_date, end_date):
+    current_date = start_date
+    while current_date <= end_date:
+        yield current_date
+        current_date += timedelta(days=1)
+
+def create_pdf_link(date):
+    financial_year = f"{date.year}-{date.year+1}" if date.month >= 4 else f"{date.year-1}-{date.year}"
+    month_year = f"{date.strftime('%B')}%20{date.year}"
+    date_string = date.strftime("%d.%m.%y")
+    return f"https://report.grid-india.in/ReportData/Daily%20Report/PSP%20Report/{financial_year}/{month_year}/{date_string}_NLDC_PSP.pdf"
+
+def download_pdf(url):
+    response = requests.get(url)
+    if response.status_code == 200:
+        return io.BytesIO(response.content)
+    return None
+
+
+
+>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+
+def extract_data_from_pdf(pdf_file, date):
+    with pdfplumber.open(pdf_file) as pdf:
+        for page in pdf.pages:
+            text = page.extract_text()
+            if "Sourcewise generation" in text or "Sourcewisegeneration" in text:
+                lines = text.split('\n')
+                if "Sourcewise generation" in text:
+                  start_index = next(i for i, line in enumerate(lines) if "Sourcewise generation" in line)
+                elif "Sourcewisegeneration" in text:
+                  start_index = next(i for i, line in enumerate(lines) if "Sourcewisegeneration" in line)
+                data_lines = lines[start_index+1:]
+                
+                # Find the end of the table
+                end_index = next(i for i, line in enumerate(data_lines) if "Total" in line)
+                data_lines = data_lines[:end_index+1]
+                
+                # Define column headers
+                columns = ['Type', 'NR', 'WR', 'SR', 'ER', 'NER', 'All India', '% Share']
+                
+                # Process data lines
+                data = []
+                for line in data_lines:
+                    values = line.split()
+                    if 'All India' in line:
+                      print("IGNORE")
+                      continue
+                    if len(values) >= 8:  # Ensure we have enough values
+                        fuel_type = ' '.join(values[:-7])
+                        numeric_values = values[-7:]
+                        data.append([fuel_type] + numeric_values)
+                
+                # Create DataFrame
+                df = pd.DataFrame(data, columns=columns)
+                df['Date'] = date
+                
+                # Reorder columns to have Date as the first column
+                cols = ['Date'] + columns
+                df = df[cols]
+                
+                return df
+    
+    print(f"Table not found in the PDF for date: {date}")
+    return None
+
+
+>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+
+def extract_data_from_pdf(pdf_file, date):
+    with pdfplumber.open(pdf_file) as pdf:
+        for page in pdf.pages:
+            text = page.extract_text()
+            search_phrases = ["Sourcewise generation", "Sourcewisegeneration"]
+            
+            for phrase in search_phrases:
+                if phrase in text:
+                    lines = text.split('\n')
+                    start_index = next((i for i, line in enumerate(lines) if phrase in line), None)
+                    if start_index is not None:
+                        break
+            else:
+                # If no match is found, return a DataFrame with a single row of None values
+                columns = ['Date', 'Type', 'NR', 'WR', 'SR', 'ER', 'NER', 'All India', '% Share']
+                return pd.DataFrame([[date] + [None] * (len(columns) - 1)], columns=columns)
+
+            data_lines = lines[start_index+1:]
+            
+            # Find the end of the table
+            end_index = next((i for i, line in enumerate(data_lines) if "Total" in line), None)
+            if end_index is None:
+                print(f"Error: 'Total' row not found in the table for date: {date}")
+                return None
+            data_lines = data_lines[:end_index+1]
+            
+            # Define column headers
+            columns = ['Type', 'NR', 'WR', 'SR', 'ER', 'NER', 'All India', '% Share']
+            
+            # Process data lines
+            data = []
+            for line in data_lines:
+                values = line.split()
+                if 'All India' in line or len(values) < 8:
+                    continue
+                fuel_type = ' '.join(values[:-7])
+                numeric_values = values[-7:]
+                data.append([fuel_type] + numeric_values)
+            
+            # Create DataFrame
+            df = pd.DataFrame(data, columns=columns)
+            df['Date'] = date
+            
+            # Reorder columns to have Date as the first column
+            cols = ['Date'] + columns
+            df = df[cols]
+            
+            return df
+    
+    print(f"Table not found in the PDF for date: {date}")
+    return None
+
+>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+start_date = datetime(2021, 7, 10)
+end_date = datetime(2021, 7, 12)
+all_data = []
+
+# for date in generate_dates(start_date, end_date):
+#     url = create_pdf_link(date)
+#     print(url)
+#     pdf_file = download_pdf(url)
+
+#     if pdf_file:
+#         data = extract_data_from_pdf(pdf_file)
+#         print(f'data - {data}')
+
+for date in generate_dates(start_date, end_date):
+    # if date.day % 2 == 1:  # Process every other day
+    url = create_pdf_link(date)
+    print(f"Processing: {url}")
+    pdf_file = download_pdf(url)
+    
+    if pdf_file:
+        data = extract_data_from_pdf(pdf_file, date.strftime("%Y-%m-%d"))
+        if data is not None and not data.empty:
+            all_data.append(data)
+            print(f"Successfully extracted data for {date.strftime('%Y-%m-%d')}")
+    else:
+        print(f"Failed to download PDF for {date.strftime('%Y-%m-%d')}")
+
+final_df = pd.concat(all_data, ignore_index=True)
