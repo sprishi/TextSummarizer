@@ -1,4 +1,78 @@
 
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+def read_excel(file_path):
+    """Read the Excel file and return a pandas DataFrame."""
+    return pd.read_excel(file_path)
+
+def create_charts(df, date_column, chart_configs):
+    """
+    Create multiple line charts based on the provided configurations.
+    
+    :param df: pandas DataFrame containing the data
+    :param date_column: name of the column to be used as x-axis (dates)
+    :param chart_configs: list of dictionaries containing chart configurations
+    :return: plotly Figure object
+    """
+    num_charts = len(chart_configs)
+    fig = make_subplots(rows=2, cols=2, subplot_titles=[config['chart_name'] for config in chart_configs])
+    
+    for i, config in enumerate(chart_configs):
+        row = i // 2 + 1
+        col = i % 2 + 1
+        
+        for y_column in config['y_columns']:
+            fig.add_trace(
+                go.Scatter(x=df[date_column], y=df[y_column], name=y_column),
+                row=row, col=col
+            )
+        
+        fig.update_xaxes(title_text=date_column, row=row, col=col)
+        fig.update_yaxes(title_text=config['y_axis_label'], row=row, col=col)
+
+    fig.update_layout(height=800, width=1200, title_text="Dynamic Multi-Chart Dashboard")
+    return fig
+
+def main():
+    # Example usage
+    file_path = "your_excel_file.xlsx"
+    df = read_excel(file_path)
+    
+    date_column = "Date"
+    chart_configs = [
+        {
+            'chart_name': 'Chart 1',
+            'y_columns': ['Column1', 'Column2', 'Column3'],
+            'y_axis_label': 'Values'
+        },
+        {
+            'chart_name': 'Chart 2',
+            'y_columns': ['Column4', 'Column5'],
+            'y_axis_label': 'Metrics'
+        },
+        {
+            'chart_name': 'Chart 3',
+            'y_columns': ['Column6'],
+            'y_axis_label': 'Score'
+        },
+        {
+            'chart_name': 'Chart 4',
+            'y_columns': ['Column7', 'Column8', 'Column9', 'Column10'],
+            'y_axis_label': 'Performance'
+        }
+    ]
+    
+    fig = create_charts(df, date_column, chart_configs)
+    fig.show()
+
+if __name__ == "__main__":
+    main()
+
+----------------------
+
 import streamlit as st
 from pages import home, admin_dashboard, user_management, profile, reports, about
 
