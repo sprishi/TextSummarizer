@@ -1,6 +1,5 @@
 
 import pandas as pd
-import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
@@ -18,22 +17,64 @@ def create_charts(df, date_column, chart_configs):
     :return: plotly Figure object
     """
     num_charts = len(chart_configs)
-    fig = make_subplots(rows=2, cols=2, subplot_titles=[config['chart_name'] for config in chart_configs])
+    fig = make_subplots(
+        rows=2, cols=2,
+        subplot_titles=[config['chart_name'] for config in chart_configs],
+        vertical_spacing=0.1,
+        horizontal_spacing=0.05
+    )
     
     for i, config in enumerate(chart_configs):
         row = i // 2 + 1
         col = i % 2 + 1
         
+        # Filter data based on start_date if provided
+        chart_df = df[df[date_column] >= config.get('start_date', df[date_column].min())]
+        
         for y_column in config['y_columns']:
+            y_values = chart_df[y_column]
+            
+            # Apply scaling factor if provided
+            if 'scale_factor' in config:
+                y_values = y_values / config['scale_factor']
+            
             fig.add_trace(
-                go.Scatter(x=df[date_column], y=df[y_column], name=y_column),
+                go.Scatter(x=chart_df[date_column], y=y_values, name=y_column),
                 row=row, col=col
             )
         
         fig.update_xaxes(title_text=date_column, row=row, col=col)
         fig.update_yaxes(title_text=config['y_axis_label'], row=row, col=col)
 
-    fig.update_layout(height=800, width=1200, title_text="Dynamic Multi-Chart Dashboard")
+    # Update layout to accommodate side labels
+    fig.update_layout(
+        height=800, 
+        width=1200, 
+        title_text="Dynamic Multi-Chart Dashboard",
+        showlegend=False
+    )
+
+    # Add side labels
+    for i, config in enumerate(chart_configs):
+        row = i // 2 + 1
+        col = i % 2 + 1
+        
+        y_pos = 0.75 if row == 1 else 0.25
+        x_pos = 0.25 if col == 1 else 0.75
+        
+        fig.add_annotation(
+            x=x_pos,
+            y=y_pos,
+            xref="paper",
+            yref="paper",
+            text="<br>".join(config['y_columns']),
+            showarrow=False,
+            font=dict(size=10),
+            align="left",
+            xanchor="right" if col == 1 else "left",
+            yanchor="middle"
+        )
+
     return fig
 
 def main():
@@ -44,9 +85,10 @@ def main():
     date_column = "Date"
     chart_configs = [
         {
-            'chart_name': 'Chart 1',
+            'chart_name': 'Chart 1 (from 2018)',
             'y_columns': ['Column1', 'Column2', 'Column3'],
-            'y_axis_label': 'Values'
+            'y_axis_label': 'Values',
+            'start_date': '2018-01-01'
         },
         {
             'chart_name': 'Chart 2',
@@ -59,9 +101,10 @@ def main():
             'y_axis_label': 'Score'
         },
         {
-            'chart_name': 'Chart 4',
+            'chart_name': 'Chart 4 (Divided by 100)',
             'y_columns': ['Column7', 'Column8', 'Column9', 'Column10'],
-            'y_axis_label': 'Performance'
+            'y_axis_label': 'Performance',
+            'scale_factor': 100
         }
     ]
     
