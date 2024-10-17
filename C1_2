@@ -1,3 +1,104 @@
+
+import openpyxl
+from openpyxl.styles import Font, PatternFill, Alignment, Border
+from openpyxl.utils import get_column_letter
+
+def copy_cell(source_cell, target_cell):
+    # Copy value
+    target_cell.value = source_cell.value
+    
+    # Copy data type
+    target_cell.data_type = source_cell.data_type
+    
+    # Copy style
+    if source_cell.has_style:
+        target_cell.font = Font(
+            name=source_cell.font.name,
+            size=source_cell.font.size,
+            bold=source_cell.font.bold,
+            italic=source_cell.font.italic,
+            color=source_cell.font.color
+        )
+        target_cell.fill = PatternFill(
+            fill_type=source_cell.fill.fill_type,
+            start_color=source_cell.fill.start_color,
+            end_color=source_cell.fill.end_color
+        )
+        target_cell.border = Border(
+            left=source_cell.border.left,
+            right=source_cell.border.right,
+            top=source_cell.border.top,
+            bottom=source_cell.border.bottom
+        )
+        target_cell.alignment = Alignment(
+            horizontal=source_cell.alignment.horizontal,
+            vertical=source_cell.alignment.vertical,
+            text_rotation=source_cell.alignment.text_rotation,
+            wrap_text=source_cell.alignment.wrap_text,
+            shrink_to_fit=source_cell.alignment.shrink_to_fit,
+            indent=source_cell.alignment.indent
+        )
+        target_cell.number_format = source_cell.number_format
+
+def copy_sheet(source_sheet, target_sheet):
+    # Copy sheet properties
+    target_sheet.sheet_format = source_sheet.sheet_format
+    target_sheet.sheet_properties = source_sheet.sheet_properties
+    
+    # Copy column dimensions
+    for col in source_sheet.column_dimensions:
+        target_sheet.column_dimensions[col] = source_sheet.column_dimensions[col].width
+    
+    # Copy row dimensions
+    for row in source_sheet.row_dimensions:
+        target_sheet.row_dimensions[row] = source_sheet.row_dimensions[row].height
+    
+    # Copy merged cells
+    target_sheet.merged_cells = source_sheet.merged_cells
+    
+    # Copy cell by cell
+    for row in source_sheet.iter_rows():
+        for cell in row:
+            target_cell = target_sheet.cell(row=cell.row, column=cell.column)
+            copy_cell(cell, target_cell)
+
+def copy_workbook(source_path, target_path, sheet_name=None):
+    # Load source workbook
+    source_wb = openpyxl.load_workbook(source_path)
+    
+    # Create new workbook
+    target_wb = openpyxl.Workbook()
+    
+    # Remove default sheet
+    target_wb.remove(target_wb.active)
+    
+    # Copy all sheets or specified sheet
+    if sheet_name:
+        source_sheet = source_wb[sheet_name]
+        target_sheet = target_wb.create_sheet(title=sheet_name)
+        copy_sheet(source_sheet, target_sheet)
+    else:
+        for sheet_name in source_wb.sheetnames:
+            source_sheet = source_wb[sheet_name]
+            target_sheet = target_wb.create_sheet(title=sheet_name)
+            copy_sheet(source_sheet, target_sheet)
+    
+    # Save target workbook
+    target_wb.save(target_path)
+
+# Example usage
+source_file = 'path/to/source/workbook.xlsx'
+target_file = 'path/to/target/workbook.xlsx'
+
+# Copy entire workbook
+copy_workbook(source_file, target_file)
+
+# Or copy a specific sheet
+# copy_workbook(source_file, target_file, sheet_name='Sheet1')
+
+
+-------------
+
 import base64
 import io
 
