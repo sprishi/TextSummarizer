@@ -1,3 +1,88 @@
+import pandas as pd
+import numpy as np
+from darts import TimeSeries
+from darts.models import SARIMA
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_squared_error
+from darts.metrics import mape
+
+# Step 1: Load your data
+df = pd.read_csv('your_data.csv')
+
+# Step 2: Prepare your Date column
+df['Date'] = pd.to_datetime(df['Date'])
+df['Month'] = df['Date'].dt.month_name()  # Month name for random forest
+df['Month-Year'] = df['Date'].dt.to_period('M')  # Month-Year for sarimax
+df = df.set_index('Date')
+
+# Step 3: Create TimeSeries for Darts (for SARIMAX)
+ts_laden = TimeSeries.from_dataframe(df, time_col='Date', value_cols='Laden Percentage')
+ts_ws_rate = TimeSeries.from_dataframe(df, time_col='Date', value_cols='WS Rate')
+
+# Step 4: Split data into train and test (80% train, 20% test)
+train_size = int(0.8 * len(df))
+ts_train_laden, ts_test_laden = ts_laden.split_before(train_size)
+ts_train_ws_rate, ts_test_ws_rate = ts_ws_rate.split_before(train_size)
+
+# SARIMAX Model with Darts
+sarimax_model = SARIMA(order=(1, 1, 1), seasonal_order=(1, 1, 1, 12))
+sarimax_model.fit(ts_train_laden)
+
+# Forecast using SARIMAX
+sarimax_forecast = sarimax_model.predict(len(ts_test_laden))
+
+# Step 5: Evaluate SARIMAX model using MAPE (Mean Absolute Percentage Error)
+sarimax_mape = mape(ts_test_laden, sarimax_forecast)
+print(f'SARIMAX MAPE: {sarimax_mape:.2f}%')
+
+# --- RANDOM FOREST MODEL ---
+
+# Step 6: Prepare data for Random Forest
+# Use WS Rate and Month-Year as exogenous variables
+X = df[['WS Rate', 'Month-Year']]
+X = pd.get_dummies(X, drop_first=True)  # One-hot encode month-year
+y = df['Laden Percentage']
+
+# Step 7: Train-test split for Random Forest
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# Step 8: Fit Random Forest Regressor
+rf_model = RandomForestRegressor(n_estimators=100, random_state=42)
+rf_model.fit(X_train, y_train)
+
+# Predict and evaluate Random Forest model
+y_pred_rf = rf_model.predict(X_test)
+rf_mse = mean_squared_error(y_test, y_pred_rf)
+print(f'Random Forest MSE: {rf_mse:.2f}')
+
+# --- FORECASTING USING OTHER MODELS IN DARTS ---
+
+# Step 9: Trying out other models in Darts
+from darts.models import Prophet, ExponentialSmoothing
+
+# Prophet Model
+prophet_model = Prophet()
+prophet_model.fit(ts_train_laden)
+prophet_forecast = prophet_model.predict(len(ts_test_laden))
+prophet_mape = mape(ts_test_laden, prophet_forecast)
+print(f'Prophet MAPE: {prophet_mape:.2f}%')
+
+# Exponential Smoothing Model
+es_model = ExponentialSmoothing()
+es_model.fit(ts_train_laden)
+es_forecast = es_model.predict(len(ts_test_laden))
+es_mape = mape(ts_test_laden, es_forecast)
+print(f'Exponential Smoothing MAPE: {es_mape:.2f}%')
+
+# Comparing models
+print(f"Model Performance:\nSARIMAX MAPE: {sarimax_mape:.2f}%\nProphet MAPE: {prophet_mape:.2f}%\nExponential Smoothing MAPE: {es_mape:.2f}%")
+
+
+
+-------
+
+
 
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border
