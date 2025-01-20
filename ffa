@@ -1,0 +1,150 @@
+import pandas as pd
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.metrics import mean_absolute_error, mean_squared_error
+import numpy as np
+
+# Load your data
+ais_data = pd.read_csv("ais_data.csv")
+crude_prices = pd.read_csv("crude_prices.csv")
+market_data = pd.read_csv("market_data.csv")
+supply_demand = pd.read_csv("supply_demand.csv")
+
+# Merge datasets on date
+data = pd.merge(ais_data, crude_prices, on="date")
+data = pd.merge(data, market_data, on="date")
+data = pd.merge(data, supply_demand, on="date")
+
+
+# Example feature engineering
+data['brent_price_lag1'] = data['brent_price'].shift(1)
+data['laden_perc_7day_avg'] = data['laden_perc'].rolling(window=7).mean()
+data['Exp_TD3C_KBD_scenario'] = data['Exp_TD3C_KBD'] + 500
+
+# Drop rows with NaN after feature creation
+data = data.dropna()
+
+# Define target and features
+features = data.drop(columns=['td_rate', 'date'])
+target = data['td_rate']
+
+
+# Split data
+X_train, X_temp, y_train, y_temp = train_test_split(features, target, test_size=0.3, random_state=42)
+X_val, X_test, y_val, y_test = train_test_split(X_temp, y_temp, test_size=0.5, random_state=42)
+
+# Normalize data
+scaler = MinMaxScaler()
+X_train = scaler.fit_transform(X_train)
+X_val = scaler.transform(X_val)
+X_test = scaler.transform(X_test)
+
+# Convert to tensors
+X_train_tensor = torch.tensor(X_train, dtype=torch.float32)
+X_val_tensor = torch.tensor(X_val, dtype=torch.float32)
+X_test_tensor = torch.tensor(X_test, dtype=torch.float32)
+y_train_tensor = torch.tensor(y_train.values, dtype=torch.float32).view(-1, 1)
+y_val_tensor = torch.tensor(y_val.values, dtype=torch.float32).view(-1, 1)
+y_test_tensor = torch.tensor(y_test.values, dtype=torch.float32).view(-1, 1)
+
+
+class LSTMModel(nn.Module):
+    def __init__(self, input_dim, hidden_dim, output_dim):
+        super(LSTMModel, self).__init__()
+        self.lstm = nn.LSTM(input_dim, hidden_dim, batch_first=True)
+        self.fc = nn.Linear(hidden_dim, output_dim)
+    
+    def forward(self, x):
+        lstm_out, _ = self.lstm(x)
+        output = self.fc(lstm_out[:, -1, :])  # Use the last time step output
+        return output
+
+
+# Initialize model, loss, and optimizer
+input_dim = X_train.shape[1]
+hidden_dim = 64
+output_dim = 1
+
+model = LSTMModel(input_dim, hidden_dim, output_dim)
+criterion = nn.MSELoss()
+optimizer = optim.Adam(model.parameters(), lr=0.001)
+
+# Reshape input for LSTM (3D input: [samples, timesteps, features])
+X_train_lstm = X_train_tensor.unsqueeze(1)
+X_val_lstm = X_val_tensor.unsqueeze(1)
+
+# Training loop
+num_epochs = 50
+for epoch in range(num_epochs):
+    model.train()
+    optimizer.zero_grad()
+    output = model(X_train_lstm)
+    loss = criterion(output, y_train_tensor)
+    loss.backward()
+    optimizer.step()
+    
+    # Validation
+    model.eval()
+    val_output = model(X_val_lstm)
+    val_loss = criterion(val_output, y_val_tensor)
+    
+    print(f"Epoch {epoch+1}/{num_epochs}, Loss: {loss.item():.4f}, Val Loss: {val_loss.item():.4f}")
+
+
+# Reshape test data
+X_test_lstm = X_test_tensor.unsqueeze(1)
+
+# Predict and evaluate
+model.eval()
+predictions = model(X_test_lstm).detach().numpy()
+mae = mean_absolute_error(y_test, predictions)
+rmse = mean_squared_error(y_test, predictions, squared=False)
+print(f"MAE: {mae:.2f}, RMSE: {rmse:.2f}")
+
+
+# Aggregate to monthly
+data['month'] = pd.to_datetime(data['date']).dt.to_period('M')
+monthly_data = data.groupby('month').mean().reset_index()
+
+# Prepare monthly features
+monthly_features = monthly_data.drop(columns=['td_rate', 'month'])
+monthly_target = monthly_data['td_rate']
+
+X_monthly_train, X_monthly_test, y_monthly_train, y_monthly_test = train_test_split(
+    monthly_features, monthly_target, test_size=0.2, random_state=42)
+
+# Train a simple linear regression for monthly predictions
+from sklearn.linear_model import LinearRegression
+lr_model = LinearRegression()
+lr_model.fit(X_monthly_train, y_monthly_train)
+
+# Predict and evaluate
+monthly_predictions = lr_model.predict(X_monthly_test)
+mae_monthly = mean_absolute_error(y_monthly_test, monthly_predictions)
+print(f"Monthly MAE: {mae_monthly:.2f}")
+
+
+# Compute 95% confidence interval for daily predictions
+lower_bound = np.percentile(predictions, 2.5)
+upper_bound = np.percentile(predictions, 97.5)
+print(f"Predicted daily price range: {lower_bound:.2f} - {upper_bound:.2f}")
+
+
+# Simulate scenario
+scenario_data = data.copy()
+scenario_data['Exp_TD3C_KBD'] += 1500  # Example scenario
+scenario_features = scaler.transform(scenario_data.drop(columns=['td_rate', 'date']))
+
+# Predict for scenario
+scenario_features_tensor = torch.tensor(scenario_features, dtype=torch.float32).unsqueeze(1)
+scenario_predictions = model(scenario_features_tensor).detach().numpy()
+
+# Compute range for the scenario
+scenario_lower = np.percentile(scenario_predictions, 2.5)
+scenario_upper = np.percentile(scenario_predictions, 97.5)
+print(f"Scenario price range: {scenario_lower:.2f} - {scenario_upper:.2f}")
+
+
