@@ -57,33 +57,37 @@ data.loc[data['td_rate'].diff() < 0, 'price_movement'] = -1
 data = data.dropna()
 
 # ==========================
-# Prepare Data for Daily Prediction
+# Train-Validation-Test Split
 # ==========================
-daily_features = data.drop(columns=['td_rate', 'date', 'month'])
-daily_target = data['td_rate']
-
-# Sequential Train-Test Split
-train_data = data[data['date'] < '2024-01-01']  # Example split
-test_data = data[data['date'] >= '2024-01-01']
+# Split into train, validation, and test sets
+train_data = data[data['date'] < '2024-01-01']
+val_data = data[(data['date'] >= '2024-01-01') & (data['date'] < '2024-07-01')]
+test_data = data[data['date'] >= '2024-07-01']
 
 X_train = train_data.drop(columns=['td_rate', 'date', 'month'])
 y_train = train_data['td_rate']
+X_val = val_data.drop(columns=['td_rate', 'date', 'month'])
+y_val = val_data['td_rate']
 X_test = test_data.drop(columns=['td_rate', 'date', 'month'])
 y_test = test_data['td_rate']
 
 # Normalize data
 scaler = MinMaxScaler()
 X_train = scaler.fit_transform(X_train)
+X_val = scaler.transform(X_val)
 X_test = scaler.transform(X_test)
 
 # Convert to tensors for PyTorch
 X_train_tensor = torch.tensor(X_train, dtype=torch.float32)
+X_val_tensor = torch.tensor(X_val, dtype=torch.float32)
 X_test_tensor = torch.tensor(X_test, dtype=torch.float32)
 y_train_tensor = torch.tensor(y_train.values, dtype=torch.float32).view(-1, 1)
+y_val_tensor = torch.tensor(y_val.values, dtype=torch.float32).view(-1, 1)
 y_test_tensor = torch.tensor(y_test.values, dtype=torch.float32).view(-1, 1)
 
 # Reshape input for LSTM (3D input: [samples, timesteps, features])
 X_train_lstm = X_train_tensor.unsqueeze(1)
+X_val_lstm = X_val_tensor.unsqueeze(1)
 X_test_lstm = X_test_tensor.unsqueeze(1)
 
 # ==========================
@@ -112,7 +116,7 @@ optimizer = optim.Adam(model.parameters(), lr=0.001)
 # ==========================
 # Train the LSTM Model
 # ==========================
-num_epochs = 50
+num_epochs = 100
 for epoch in range(num_epochs):
     model.train()
     optimizer.zero_grad()
@@ -121,13 +125,13 @@ for epoch in range(num_epochs):
     loss.backward()
     optimizer.step()
     
-    # Validation (evaluate on test data sequentially)
+    # Validation
     model.eval()
     with torch.no_grad():
-        test_output = model(X_test_lstm)
-        test_loss = criterion(test_output, y_test_tensor)
+        val_output = model(X_val_lstm)
+        val_loss = criterion(val_output, y_val_tensor)
     
-    print(f"Epoch {epoch+1}/{num_epochs}, Loss: {loss.item():.4f}, Test Loss: {test_loss.item():.4f}")
+    print(f"Epoch {epoch+1}/{num_epochs}, Loss: {loss.item():.4f}, Val Loss: {val_loss.item():.4f}")
 
 # ==========================
 # Evaluate Daily Prediction
@@ -152,24 +156,32 @@ daily_range_upper = np.percentile(daily_predictions, 97.5)
 print(f"Prediction Range: {daily_range_lower:.2f} - {daily_range_upper:.2f}")
 
 # ==========================
-# Scenario Modeling for Daily Prediction
+# Monthly Prediction and Scenario
 # ==========================
-# Modify Export values and predict
-scenario_data = test_data.copy()
-scenario_data['Exp_TD3C_KBD'] += 1500
-scenario_features = scaler.transform(scenario_data.drop(columns=['td_rate', 'date', 'month']))
-scenario_features_tensor = torch.tensor(scenario_features, dtype=torch.float32).unsqueeze(1)
+# Aggregate data for monthly modeling
+monthly_data = data.groupby('month').agg({
+    'brent_price': 'mean',
+    'laden_perc': 'mean',
+    'cum_count_vlcc': 'max',
+    'td_rate': 'mean'  # Target
+}).reset_index()
 
-# Predict for scenario
-model.eval()
-with torch.no_grad():
-    scenario_predictions = model(scenario_features_tensor).numpy()
+monthly_features = monthly_data.drop(columns=['td_rate', 'month'])
+monthly_target = monthly_data['td_rate']
 
-# Scenario Prediction Range
-scenario_lower = np.percentile(scenario_predictions, 2.5)
-scenario_upper = np.percentile(scenario_predictions, 97.5)
-print(f"Scenario Prediction Range: {scenario_lower:.2f} - {scenario_upper:.2f}")
+# Split into train and test sets
+X_monthly_train, X_monthly_test, y_monthly_train, y_monthly_test = train_test_split(
+    monthly_features, monthly_target, test_size=0.2, random_state=42)
 
+# Train a regression model
+from sklearn.ensemble import RandomForestRegressor
+rf_model = RandomForestRegressor(n_estimators=100, random_state=42)
+rf_model.fit(X_monthly_train, y_monthly_train)
+
+# Predict and evaluate
+monthly_predictions = rf_model.predict(X_monthly_test)
+mae_monthly = mean_absolute_error(y_monthly_test, monthly_predictions)
+print(f"Monthly Prediction MAE: {mae_monthly:.2f}")
 
 
 #==============
