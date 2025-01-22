@@ -1,3 +1,179 @@
+# Import required libraries
+import pandas as pd
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.metrics import mean_absolute_error, mean_squared_error
+
+# Load data (replace with actual file paths)
+ais_data = pd.read_csv("ais_data.csv")
+crude_prices = pd.read_csv("crude_prices.csv")
+market_data = pd.read_csv("market_data.csv")
+supply_demand = pd.read_csv("supply_demand.csv")
+
+# Merge datasets on the 'date' column
+data = pd.merge(ais_data, crude_prices, on="date")
+data = pd.merge(data, market_data, on="date")
+data = pd.merge(data, supply_demand, on="date")
+
+# Convert 'date' to datetime
+data['date'] = pd.to_datetime(data['date'])
+
+# Create month-year column for aggregation purposes
+data['month'] = data['date'].dt.to_period('M')
+
+# ==========================
+# Feature Engineering
+# ==========================
+
+# Lag features
+data['brent_price_lag1'] = data['brent_price'].shift(1)
+data['td_rate_lag1'] = data['td_rate'].shift(1)  # Include today's price to predict tomorrow
+data['laden_perc_7day_avg'] = data['laden_perc'].rolling(window=7).mean()
+
+# Cumulative and scenario features
+data['cum_count_vlcc'] = data.groupby('month')['Count_VLCC'].cumsum()
+data['Exp_TD3C_KBD_scenario'] = data['Exp_TD3C_KBD'] + 500  # Example scenario
+
+# Dummy variable for global events
+std_dev_threshold = 2.25
+window_size = 20
+rolling_mean = data['td_rate'].rolling(window=window_size).mean()
+rolling_std = data['td_rate'].rolling(window=window_size).std()
+data['price_outlier'] = ((data['td_rate'] - rolling_mean) > std_dev_threshold * rolling_std).astype(int)
+
+# Shift dummy variable to account for impact on the next day
+data['price_outlier'] = data['price_outlier'].shift(-1).fillna(0)
+
+# Add an improved dummy variable (1: up, -1: down, 0: stable)
+data['price_movement'] = 0
+data.loc[data['td_rate'].diff() > 0, 'price_movement'] = 1
+data.loc[data['td_rate'].diff() < 0, 'price_movement'] = -1
+
+# Drop rows with NaN after feature creation
+data = data.dropna()
+
+# ==========================
+# Prepare Data for Daily Prediction
+# ==========================
+daily_features = data.drop(columns=['td_rate', 'date', 'month'])
+daily_target = data['td_rate']
+
+# Sequential Train-Test Split
+train_data = data[data['date'] < '2024-01-01']  # Example split
+test_data = data[data['date'] >= '2024-01-01']
+
+X_train = train_data.drop(columns=['td_rate', 'date', 'month'])
+y_train = train_data['td_rate']
+X_test = test_data.drop(columns=['td_rate', 'date', 'month'])
+y_test = test_data['td_rate']
+
+# Normalize data
+scaler = MinMaxScaler()
+X_train = scaler.fit_transform(X_train)
+X_test = scaler.transform(X_test)
+
+# Convert to tensors for PyTorch
+X_train_tensor = torch.tensor(X_train, dtype=torch.float32)
+X_test_tensor = torch.tensor(X_test, dtype=torch.float32)
+y_train_tensor = torch.tensor(y_train.values, dtype=torch.float32).view(-1, 1)
+y_test_tensor = torch.tensor(y_test.values, dtype=torch.float32).view(-1, 1)
+
+# Reshape input for LSTM (3D input: [samples, timesteps, features])
+X_train_lstm = X_train_tensor.unsqueeze(1)
+X_test_lstm = X_test_tensor.unsqueeze(1)
+
+# ==========================
+# Define LSTM Model
+# ==========================
+class LSTMModel(nn.Module):
+    def __init__(self, input_dim, hidden_dim, output_dim):
+        super(LSTMModel, self).__init__()
+        self.lstm = nn.LSTM(input_dim, hidden_dim, batch_first=True)
+        self.fc = nn.Linear(hidden_dim, output_dim)
+    
+    def forward(self, x):
+        lstm_out, _ = self.lstm(x)
+        output = self.fc(lstm_out[:, -1, :])  # Use the last time step output
+        return output
+
+# Initialize model, loss, and optimizer
+input_dim = X_train.shape[1]
+hidden_dim = 64
+output_dim = 1
+
+model = LSTMModel(input_dim, hidden_dim, output_dim)
+criterion = nn.MSELoss()
+optimizer = optim.Adam(model.parameters(), lr=0.001)
+
+# ==========================
+# Train the LSTM Model
+# ==========================
+num_epochs = 50
+for epoch in range(num_epochs):
+    model.train()
+    optimizer.zero_grad()
+    output = model(X_train_lstm)
+    loss = criterion(output, y_train_tensor)
+    loss.backward()
+    optimizer.step()
+    
+    # Validation (evaluate on test data sequentially)
+    model.eval()
+    with torch.no_grad():
+        test_output = model(X_test_lstm)
+        test_loss = criterion(test_output, y_test_tensor)
+    
+    print(f"Epoch {epoch+1}/{num_epochs}, Loss: {loss.item():.4f}, Test Loss: {test_loss.item():.4f}")
+
+# ==========================
+# Evaluate Daily Prediction
+# ==========================
+model.eval()
+with torch.no_grad():
+    daily_predictions = model(X_test_lstm).numpy()
+
+# Calculate MAE
+mae_daily = mean_absolute_error(y_test, daily_predictions)
+print(f"Daily Prediction MAE: {mae_daily:.2f}")
+
+# Calculate Directional Accuracy
+y_test_direction = np.sign(y_test.diff().fillna(0))
+daily_predictions_direction = np.sign(pd.Series(daily_predictions.flatten()).diff().fillna(0))
+directional_accuracy = (y_test_direction == daily_predictions_direction).mean() * 100
+print(f"Directional Accuracy: {directional_accuracy:.2f}%")
+
+# Calculate Prediction Range
+daily_range_lower = np.percentile(daily_predictions, 2.5)
+daily_range_upper = np.percentile(daily_predictions, 97.5)
+print(f"Prediction Range: {daily_range_lower:.2f} - {daily_range_upper:.2f}")
+
+# ==========================
+# Scenario Modeling for Daily Prediction
+# ==========================
+# Modify Export values and predict
+scenario_data = test_data.copy()
+scenario_data['Exp_TD3C_KBD'] += 1500
+scenario_features = scaler.transform(scenario_data.drop(columns=['td_rate', 'date', 'month']))
+scenario_features_tensor = torch.tensor(scenario_features, dtype=torch.float32).unsqueeze(1)
+
+# Predict for scenario
+model.eval()
+with torch.no_grad():
+    scenario_predictions = model(scenario_features_tensor).numpy()
+
+# Scenario Prediction Range
+scenario_lower = np.percentile(scenario_predictions, 2.5)
+scenario_upper = np.percentile(scenario_predictions, 97.5)
+print(f"Scenario Prediction Range: {scenario_lower:.2f} - {scenario_upper:.2f}")
+
+
+
+#==============
+
 
 # Import required libraries
 import pandas as pd
