@@ -171,6 +171,71 @@ monthly_eval_table = pd.DataFrame({
 print(monthly_eval_table)
 
 
+
+##
+
+# ==========================
+# Retrain Model on Full Data
+# ==========================
+# Combine all data for training
+X_full = scaler.fit_transform(daily_features)
+y_full = daily_target.values
+
+# Convert to tensors
+X_full_tensor = torch.tensor(X_full, dtype=torch.float32).unsqueeze(1)  # Add time dimension
+y_full_tensor = torch.tensor(y_full, dtype=torch.float32).view(-1, 1)
+
+# Retrain LSTM Model
+model = LSTMModel(input_dim=X_full.shape[1], hidden_dim=64, output_dim=1)
+optimizer = optim.Adam(model.parameters(), lr=0.001)
+
+# Early Stopping Parameters
+best_val_loss = float('inf')
+patience = 10
+counter = 0
+
+for epoch in range(500):  # Use fewer epochs for full data retraining
+    model.train()
+    optimizer.zero_grad()
+    output = model(X_full_tensor)
+    loss = criterion(output, y_full_tensor)
+    loss.backward()
+    optimizer.step()
+
+    # Print training progress
+    if epoch % 50 == 0:
+        print(f"Epoch {epoch+1}/{500}, Loss: {loss.item():.4f}")
+
+# ==========================
+# Predict Next Data Point
+# ==========================
+# Use the last available data point as input for prediction
+next_input = torch.tensor(X_full[-1], dtype=torch.float32).unsqueeze(0).unsqueeze(0)  # Add batch and time dims
+
+# Enable dropout during prediction for uncertainty estimation
+model.train()
+
+# Monte Carlo Dropout for Range Prediction
+num_simulations = 100  # Number of forward passes
+predictions = []
+
+with torch.no_grad():
+    for _ in range(num_simulations):
+        predictions.append(model(next_input).item())
+
+# Calculate Prediction Range
+next_prediction = np.mean(predictions)
+lower_bound = np.percentile(predictions, 2.5)
+upper_bound = np.percentile(predictions, 97.5)
+
+print(f"Next Data Point Prediction: {next_prediction:.2f}")
+print(f"Prediction Range: {lower_bound:.2f} - {upper_bound:.2f}")
+
+
+
+
+
+
 #==========
 
 # Import required libraries
