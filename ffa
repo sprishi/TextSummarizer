@@ -1,3 +1,236 @@
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import numpy as np
+import pandas as pd
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.metrics import mean_absolute_error
+from torch.utils.data import Dataset, DataLoader, TensorDataset
+
+# =============================================
+# Step 1: Data Preparation & Feature Engineering
+# =============================================
+
+# Mock dataframe structure - replace with your actual data loading
+# Assuming df has columns: ['date', 'WS_Spot', 'laden_perc', 'spread_perc_global', ...]
+df = pd.read_csv('your_data.csv', parse_dates=['date'])
+
+# 1.1 Handle Monthly Export Data (Exp_TD3C_KBD)
+df['Exp_TD3C_KBD'] = df['Exp_TD3C_KBD'].ffill()  # Forward fill monthly values to daily
+
+# 1.2 Smooth Count_VLCC with 7-day rolling average
+df['Count_VLCC'] = df['Count_VLCC'].rolling(7, min_periods=1).mean()
+
+# 1.3 Create Lag Features (7-day lags)
+lag_days = 7
+features_to_lag = ['brent_price', 'BDTI', 'MFO_Fuj', 'laden_perc']
+for feat in features_to_lag:
+    for lag in range(1, lag_days+1):
+        df[f'{feat}_lag{lag}'] = df[feat].shift(lag)
+
+# 1.4 Event Dummies (Add your actual event dates)
+events = {
+    'covid': ('2020-03-01', '2022-12-31'), 
+    'russia_war': ('2022-02-24', '2023-12-31')
+}
+df['event_dummy'] = 0
+for event, (start, end) in events.items():
+    df.loc[df['date'].between(start, end), 'event_dummy'] = 1
+
+# 1.5 Final Features & Target
+features = ['brent_price', 'BDTI', 'MFO_Fuj', 'laden_perc', 'spread_perc_global',
+            'Count_VLCC', 'Exp_TD3C_KBD', 'USD_SAR', 'USD_CNY', 'event_dummy'] + \
+           [f'{feat}_lag{i}' for feat in features_to_lag for i in range(1, lag_days+1)]
+target = 'WS_Spot'
+
+# 1.6 Split Data (Time-based)
+train_size = int(0.7 * len(df))
+val_size = int(0.15 * len(df))
+test_size = len(df) - train_size - val_size
+
+train_df = df.iloc[:train_size]
+val_df = df.iloc[train_size:train_size+val_size]
+test_df = df.iloc[train_size+val_size:]
+
+# 1.7 Normalization
+scaler = MinMaxScaler()
+train_scaled = scaler.fit_transform(train_df[features])
+val_scaled = scaler.transform(val_df[features])
+test_scaled = scaler.transform(test_df[features])
+
+# =============================================
+# Step 2: PyTorch Dataset & DataLoader
+# =============================================
+
+class TimeSeriesDataset(Dataset):
+    def __init__(self, X, y, seq_length=60):
+        self.X = torch.tensor(X, dtype=torch.float32)
+        self.y = torch.tensor(y, dtype=torch.float32)
+        self.seq_length = seq_length
+
+    def __len__(self):
+        return len(self.X) - self.seq_length
+
+    def __getitem__(self, idx):
+        return (self.X[idx:idx+self.seq_length], 
+                self.y[idx+self.seq_length])
+
+# Create datasets
+seq_length = 60  # 2 months lookback
+
+train_dataset = TimeSeriesDataset(
+    train_scaled, train_df[target].values, seq_length
+)
+val_dataset = TimeSeriesDataset(
+    val_scaled, val_df[target].values, seq_length
+)
+test_dataset = TimeSeriesDataset(
+    test_scaled, test_df[target].values, seq_length
+)
+
+# DataLoaders
+batch_size = 32
+train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+val_loader = DataLoader(val_dataset, batch_size=batch_size)
+test_loader = DataLoader(test_dataset, batch_size=batch_size)
+
+# =============================================
+# Step 3: LSTM Model Architecture (Multi-Task)
+# =============================================
+
+class LSTMModel(nn.Module):
+    def __init__(self, input_size, hidden_size=128, num_layers=2):
+        super().__init__()
+        self.lstm = nn.LSTM(
+            input_size, hidden_size, num_layers, 
+            batch_first=True, dropout=0.2
+        )
+        self.regressor = nn.Sequential(
+            nn.Linear(hidden_size, 64),
+            nn.ReLU(),
+            nn.Linear(64, 1)
+        )
+        self.classifier = nn.Sequential(
+            nn.Linear(hidden_size, 64),
+            nn.ReLU(),
+            nn.Linear(64, 1)
+        )
+        
+    def forward(self, x):
+        lstm_out, _ = self.lstm(x)
+        last_out = lstm_out[:, -1, :]
+        return self.regressor(last_out), self.classifier(last_out)
+
+model = LSTMModel(input_size=len(features))
+criterion_reg = nn.MSELoss()
+criterion_cls = nn.BCEWithLogitsLoss()
+optimizer = optim.Adam(model.parameters(), lr=0.001)
+
+# =============================================
+# Step 4: Training with Early Stopping
+# =============================================
+
+best_val_loss = float('inf')
+patience, trials = 5, 0
+
+for epoch in range(100):
+    # Training
+    model.train()
+    train_loss = 0
+    for X_batch, y_batch in train_loader:
+        optimizer.zero_grad()
+        pred_reg, pred_cls = model(X_batch)
+        loss_reg = criterion_reg(pred_reg.squeeze(), y_batch)
+        loss_cls = criterion_cls(pred_cls.squeeze(), (y_batch > X_batch[:, -1, 0]).float())
+        loss = 0.7*loss_reg + 0.3*loss_cls
+        loss.backward()
+        optimizer.step()
+        train_loss += loss.item()
+    
+    # Validation
+    model.eval()
+    val_loss = 0
+    with torch.no_grad():
+        for X_val, y_val in val_loader:
+            pred_reg, pred_cls = model(X_val)
+            loss_reg = criterion_reg(pred_reg.squeeze(), y_val)
+            loss_cls = criterion_cls(pred_cls.squeeze(), (y_val > X_val[:, -1, 0]).float())
+            val_loss += (0.7*loss_reg + 0.3*loss_cls).item()
+    
+    # Early stopping
+    if val_loss < best_val_loss:
+        best_val_loss = val_loss
+        trials = 0
+        torch.save(model.state_dict(), 'best_model.pth')
+    else:
+        trials += 1
+        if trials >= patience:
+            print(f'Early stopping at epoch {epoch}')
+            break
+
+    print(f'Epoch {epoch}: Train Loss {train_loss/len(train_loader):.4f}, Val Loss {val_loss/len(val_loader):.4f}')
+
+# =============================================
+# Step 5: Final Training & Prediction
+# =============================================
+
+# 5.1 Retrain on full data
+full_dataset = TimeSeriesDataset(
+    scaler.transform(df[features]), df[target].values, seq_length
+)
+full_loader = DataLoader(full_dataset, batch_size=batch_size)
+
+model.load_state_dict(torch.load('best_model.pth'))
+optimizer = optim.Adam(model.parameters(), lr=0.0001)  # Smaller LR for fine-tuning
+
+# Train for few more epochs
+for epoch in range(10):
+    # Training loop similar to above...
+
+# 5.2 Prediction Function
+def predict_next_period(model, last_sequence, steps=30):
+    model.eval()
+    predictions = []
+    current_seq = last_sequence.clone()
+    
+    with torch.no_grad():
+        for _ in range(steps):
+            pred_reg, _ = model(current_seq.unsqueeze(0))
+            predictions.append(pred_reg.item())
+            # Update sequence
+            new_features = ...  # Update features (requires real-time data)
+            current_seq = torch.cat([current_seq[1:], new_features])
+    
+    return predictions
+
+# Get last sequence from full data
+last_seq = torch.tensor(scaler.transform(df[features].iloc[-seq_length:].values), 
+                       dtype=torch.float32)
+
+# Predictions
+next_day = predict_next_period(model, last_seq, steps=1)
+next_week = predict_next_period(model, last_seq, steps=7)
+next_month = predict_next_period(model, last_seq, steps=30)
+
+# =============================================
+# Step 6: Scenario Analysis (Example)
+# =============================================
+
+def run_scenario(df, export_increase=1500):
+    # Clone data and modify exports
+    scenario_df = df.copy()
+    scenario_df['Exp_TD3C_KBD'] += export_increase
+    # Repeat steps 1.6-1.7 for scenario data
+    # Return predictions
+    return predict_next_period(model, scenario_seq)
+
+
+
+
+
+#----------------------------
+
+
 
 import pandas as pd
 import numpy as np
