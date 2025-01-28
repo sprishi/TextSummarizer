@@ -1,3 +1,234 @@
+
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import numpy as np
+import pandas as pd
+from sklearn.metrics import mean_absolute_error, accuracy_score
+from torch.utils.data import Dataset, DataLoader
+
+# --------------------
+# 1. Data Preparation
+# --------------------
+# Load your dataframe (replace with actual data loading)
+df = pd.read_csv('td3c_data.csv', parse_dates=['date'])
+
+# Feature Engineering
+def preprocess_data(df):
+    # Shift target for multi-horizon forecasting
+    df['WS_Spot_next_day'] = df['WS_Spot'].shift(-1)
+    df['WS_Spot_next_week'] = df['WS_Spot'].shift(-7)
+    df['WS_Spot_next_month'] = df['WS_Spot'].shift(-30)
+    
+    # Handle monthly features (example: Exp_TD3C_KBD)
+    df['Exp_TD3C_KBD'] = df['Exp_TD3C_KBD'].ffill()  # Forward fill monthly data
+    
+    # Lag features
+    for lag in [1, 7, 30]:
+        df[f'WS_Spot_lag_{lag}'] = df['WS_Spot'].shift(lag)
+        df[f'Brent_lag_{lag}'] = df['brent_price'].shift(lag)
+    
+    # Rolling features
+    df['Count_VLCC_7d_avg'] = df['Count_VLCC'].rolling(7).mean()
+    
+    # Event dummies (example: COVID period)
+    df['event_covid'] = ((df['date'] >= '2020-03-01') & (df['date'] <= '2021-06-01')).astype(int)
+    
+    # Drop rows with NaNs from shifting
+    df = df.dropna()
+    return df
+
+df = preprocess_data(df)
+
+# --------------------
+# 2. Train/Val/Test Split
+# --------------------
+def time_based_split(df, train_end='2023-12-31', val_end='2024-06-30'):
+    train = df[df['date'] <= train_end]
+    val = df[(df['date'] > train_end) & (df['date'] <= val_end)]
+    test = df[df['date'] > val_end]
+    return train, val, test
+
+train_df, val_df, test_df = time_based_split(df)
+
+# --------------------
+# 3. Create Sequences
+# --------------------
+class TimeSeriesDataset(Dataset):
+    def __init__(self, df, window_size=30):
+        self.window_size = window_size
+        features = df.drop(columns=['date', 'WS_Spot_next_day', 'WS_Spot_next_week', 'WS_Spot_next_month'])
+        targets = df[['WS_Spot_next_day', 'WS_Spot_next_week', 'WS_Spot_next_month']]
+        
+        self.X = []
+        self.y = []
+        for i in range(len(df) - window_size):
+            self.X.append(features.iloc[i:i+window_size].values)
+            self.y.append(targets.iloc[i+window_size].values)
+        
+        self.X = torch.tensor(np.array(self.X), dtype=torch.float32)
+        self.y = torch.tensor(np.array(self.y), dtype=torch.float32)
+    
+    def __len__(self):
+        return len(self.X)
+    
+    def __getitem__(self, idx):
+        return self.X[idx], self.y[idx]
+
+window_size = 30
+train_dataset = TimeSeriesDataset(train_df, window_size)
+val_dataset = TimeSeriesDataset(val_df, window_size)
+test_dataset = TimeSeriesDataset(test_df, window_size)
+
+# --------------------
+# 4. LSTM Model (Multi-Output)
+# --------------------
+class LSTMModel(nn.Module):
+    def __init__(self, input_size, hidden_size=64, output_size=3):
+        super().__init__()
+        self.lstm = nn.LSTM(input_size, hidden_size, batch_first=True)
+        self.dropout = nn.Dropout(0.3)
+        self.linear = nn.Linear(hidden_size, output_size)
+        
+    def forward(self, x):
+        x, _ = self.lstm(x)
+        x = x[:, -1, :]  # Take last timestep
+        x = self.dropout(x)
+        x = self.linear(x)
+        return x
+
+# Initialize model
+input_size = len(train_df.columns) - 4  # Exclude date and targets
+model = LSTMModel(input_size=input_size)
+criterion = nn.L1Loss()  # MAE loss
+optimizer = optim.Adam(model.parameters(), lr=1e-3)
+
+# --------------------
+# 5. Training Loop
+# --------------------
+def train_model(model, train_loader, val_loader, epochs=100):
+    best_loss = float('inf')
+    for epoch in range(epochs):
+        model.train()
+        train_loss = 0
+        for X_batch, y_batch in train_loader:
+            optimizer.zero_grad()
+            output = model(X_batch)
+            loss = criterion(output, y_batch)
+            loss.backward()
+            optimizer.step()
+            train_loss += loss.item()
+        
+        # Validation
+        model.eval()
+        val_loss = 0
+        with torch.no_grad():
+            for X_val, y_val in val_loader:
+                output = model(X_val)
+                val_loss += criterion(output, y_val).item()
+        
+        # Early stopping
+        if val_loss < best_loss:
+            best_loss = val_loss
+            torch.save(model.state_dict(), 'best_model.pth')
+        
+        print(f'Epoch {epoch+1}: Train MAE {train_loss/len(train_loader):.2f}, Val MAE {val_loss/len(val_loader):.2f}')
+
+# Create DataLoaders
+batch_size = 32
+train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+val_loader = DataLoader(val_dataset, batch_size=batch_size)
+
+# Start training
+train_model(model, train_loader, val_loader, epochs=100)
+
+# --------------------
+# 6. Evaluation & Metrics
+# --------------------
+def evaluate_model(model, test_loader):
+    model.eval()
+    predictions = []
+    actuals = []
+    with torch.no_grad():
+        for X_test, y_test in test_loader:
+            output = model(X_test)
+            predictions.append(output.numpy())
+            actuals.append(y_test.numpy())
+    
+    predictions = np.concatenate(predictions)
+    actuals = np.concatenate(actuals)
+    
+    # MAE
+    mae_day = mean_absolute_error(actuals[:, 0], predictions[:, 0])
+    mae_week = mean_absolute_error(actuals[:, 1], predictions[:, 1])
+    mae_month = mean_absolute_error(actuals[:, 2], predictions[:, 2])
+    
+    # Directional Accuracy
+    direction_day = accuracy_score((actuals[:, 0] > 0), (predictions[:, 0] > 0))
+    direction_week = accuracy_score((actuals[:, 1] > 0), (predictions[:, 1] > 0))
+    direction_month = accuracy_score((actuals[:, 2] > 0), (predictions[:, 2] > 0))
+    
+    return {
+        'mae': (mae_day, mae_week, mae_month),
+        'direction_accuracy': (direction_day, direction_week, direction_month)
+    }
+
+test_loader = DataLoader(test_dataset, batch_size=batch_size)
+metrics = evaluate_model(model, test_loader)
+print(f"Test MAE: Day {metrics['mae'][0]:.2f}, Week {metrics['mae'][1]:.2f}, Month {metrics['mae'][2]:.2f}")
+print(f"Direction Accuracy: Day {metrics['direction_accuracy'][0]:.2%}, Week {metrics['direction_accuracy'][1]:.2%}, Month {metrics['direction_accuracy'][2]:.2%}")
+
+# --------------------
+# 7. Prediction Intervals (MC Dropout)
+# --------------------
+def predict_with_uncertainty(model, X, n_iter=100):
+    model.train()  # Keep dropout active
+    predictions = []
+    with torch.no_grad():
+        for _ in range(n_iter):
+            predictions.append(model(X).numpy())
+    return np.array(predictions)
+
+# Example usage on test data
+X_test_sample = test_dataset[0][0].unsqueeze(0)
+mc_predictions = predict_with_uncertainty(model, X_test_sample)
+print(f"95% Prediction Interval (Day): {np.percentile(mc_predictions[:, 0], [2.5, 97.5])}")
+
+# --------------------
+# 8. Scenario Analysis
+# --------------------
+def scenario_analysis(base_data, export_increase=500):
+    # Clone and modify export data
+    scenario_data = base_data.clone()
+    scenario_data[:, :, df.columns.get_loc('Exp_TD3C_KBD')] += export_increase
+    return model(scenario_data)
+
+# Example: Predict with +1500 KBD exports
+base_input = test_dataset[-1][0].unsqueeze(0)  # Last available data point
+scenario_pred = scenario_analysis(base_input, 1500)
+print(f"Scenario Prediction: {scenario_pred.detach().numpy()}")
+
+# --------------------
+# 9. Final Predictions (Jan 14, 2025+)
+# --------------------
+# Retrain on full data
+full_dataset = TimeSeriesDataset(df, window_size)
+full_loader = DataLoader(full_dataset, batch_size=batch_size, shuffle=True)
+train_model(model, full_loader, val_loader, epochs=50)  # Final tuning
+
+# Get latest window
+latest_window = torch.tensor(df.iloc[-window_size:].drop(columns=['date', 'WS_Spot_next_day', 'WS_Spot_next_week', 'WS_Spot_next_month']).values,
+                            dtype=torch.float32).unsqueeze(0)
+
+# Predict future
+with torch.no_grad():
+    predictions = model(latest_window)
+    print(f"Next day: {predictions[0,0]:.2f}, Week: {predictions[0,1]:.2f}, Month: {predictions[0,2]:.2f}")
+
+
+# =============================================================================================
+
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
