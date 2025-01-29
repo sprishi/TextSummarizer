@@ -1,3 +1,205 @@
+# -*- coding: utf-8 -*-
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from pmdarima import auto_arima
+from prophet import Prophet
+from sklearn.metrics import mean_absolute_error, mean_squared_error, accuracy_score
+from statsmodels.stats.outliers_influence import variance_inflation_factor
+
+# ----------------------------
+# 1. Data Loading & Preparation
+# ----------------------------
+# Load preprocessed data
+weekly = pd.read_csv('weekly_data.csv', parse_dates=['Date'], index_col='Date')
+monthly = pd.read_csv('monthly_data.csv', parse_dates=['Date'], index_col='Date')
+
+# Final feature columns (excluding targets)
+features_weekly = weekly.columns.tolist()[:-1]  # Assuming last column is target
+features_monthly = monthly.columns.tolist()[:-1]
+
+# ----------------------------
+# 2. Train-Test Split (Time-Based)
+# ----------------------------
+def time_split(df, test_size=0.2):
+    split_idx = int(len(df)*(1-test_size))
+    return df.iloc[:split_idx], df.iloc[split_idx:]
+
+# Weekly split
+train_week, test_week = time_split(weekly)
+X_train_week, y_train_week = train_week[features_weekly], train_week.iloc[:,-1]
+X_test_week, y_test_week = test_week[features_weekly], test_week.iloc[:,-1]
+
+# Monthly split
+train_month, test_month = time_split(monthly)
+X_train_month, y_train_month = train_month[features_monthly], train_month.iloc[:,-1]
+X_test_month, y_test_month = test_month[features_monthly], test_month.iloc[:,-1]
+
+# ----------------------------
+# 3. Model Building & Evaluation
+# ----------------------------
+def run_arima(X_train, y_train, X_test, freq='W'):
+    model = auto_arima(y_train, exogenous=X_train,
+                      seasonal=True, m=4 if freq=='W' else 12,
+                      stepwise=True, suppress_warnings=True)
+    preds, conf_int = model.predict(n_periods=len(X_test), 
+                                  exogenous=X_test, 
+                                  return_conf_int=True)
+    return model, preds, conf_int
+
+def run_prophet(train, test, freq='W'):
+    df = train.reset_index().rename(columns={'Date':'ds', train.columns[-1]:'y'})
+    m = Prophet(weekly_seasonality=(freq=='W'), yearly_seasonality=True)
+    
+    for col in features_weekly if freq=='W' else features_monthly:
+        m.add_regressor(col)
+        
+    m.fit(df)
+    
+    future = m.make_future_dataframe(periods=len(test), freq=freq)
+    future = future.merge(test.reset_index(), on='Date', how='right')
+    forecast = m.predict(future)
+    return m, forecast.yhat.values, forecast[['yhat_lower', 'yhat_upper']].values
+
+# Weekly Models
+arima_week_model, arima_week_preds, arima_week_ci = run_arima(X_train_week, y_train_week, X_test_week)
+prophet_week_model, prophet_week_preds, prophet_week_ci = run_prophet(train_week, test_week)
+
+# Monthly Models
+arima_month_model, arima_month_preds, arima_month_ci = run_arima(X_train_month, y_train_month, X_test_month)
+prophet_month_model, prophet_month_preds, prophet_month_ci = run_prophet(train_month, test_month)
+
+# ----------------------------
+# 4. Model Evaluation Metrics
+# ----------------------------
+def evaluate_results(actual, preds, ci, model_name):
+    results = pd.DataFrame({
+        'Actual': actual.values,
+        'Predicted': preds,
+        'Lower': ci[:,0],
+        'Upper': ci[:,1]
+    }, index=actual.index)
+    
+    # Direction Accuracy
+    results['Actual_Direction'] = (results['Actual'].diff() > 0).astype(int)
+    results['Predicted_Direction'] = (results['Predicted'].diff() > 0).astype(int)
+    
+    print(f"\n{model_name} Evaluation:")
+    print(f"MAE: {mean_absolute_error(results.Actual, results.Predicted):.2f}")
+    print(f"RMSE: {np.sqrt(mean_squared_error(results.Actual, results.Predicted)):.2f}")
+    print(f"Direction Accuracy: {accuracy_score(results.Actual_Direction[1:], results.Predicted_Direction[1:]):.2%}")
+    
+    return results
+
+# Evaluate all models
+week_arima_results = evaluate_results(y_test_week, arima_week_preds, arima_week_ci, "Weekly ARIMA")
+week_prophet_results = evaluate_results(y_test_week, prophet_week_preds, prophet_week_ci, "Weekly Prophet")
+month_arima_results = evaluate_results(y_test_month, arima_month_preds, arima_month_ci, "Monthly ARIMA")
+month_prophet_results = evaluate_results(y_test_month, prophet_month_preds, prophet_month_ci, "Monthly Prophet")
+
+# ----------------------------
+# 5. Visualization
+# ----------------------------
+def plot_predictions(results, title):
+    plt.figure(figsize=(12,6))
+    plt.plot(results.index, results.Actual, label='Actual', marker='o')
+    plt.plot(results.index, results.Predicted, label='Predicted', linestyle='--')
+    plt.fill_between(results.index, results.Lower, results.Upper, alpha=0.2)
+    plt.title(f"{title}\nMAE: {mean_absolute_error(results.Actual, results.Predicted):.2f}")
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+
+plot_predictions(week_arima_results, "Weekly ARIMA Predictions")
+plot_predictions(week_prophet_results, "Weekly Prophet Predictions")
+plot_predictions(month_arima_results, "Monthly ARIMA Predictions")
+plot_predictions(month_prophet_results, "Monthly Prophet Predictions")
+
+# ----------------------------
+# 6. Full Retraining & Final Predictions
+# ----------------------------
+def final_retrain(df, model_type='arima', freq='W'):
+    X = df[features_weekly if freq=='W' else features_monthly]
+    y = df.iloc[:,-1]
+    
+    if model_type == 'arima':
+        model = auto_arima(y, exogenous=X, seasonal=True, m=4 if freq=='W' else 12)
+        next_date = df.index[-1] + pd.DateOffset(weeks=1 if freq=='W' else months=1)
+        pred, ci = model.predict(n_periods=1, exogenous=X.iloc[[-1]], return_conf_int=True)
+    else:
+        prophet_df = df.reset_index().rename(columns={'Date':'ds', df.columns[-1]:'y'})
+        m = Prophet(weekly_seasonality=(freq=='W'), yearly_seasonality=True)
+        for col in X.columns:
+            m.add_regressor(col)
+        m.fit(prophet_df)
+        future = m.make_future_dataframe(periods=1, freq=freq)
+        future = future.merge(X.iloc[[-1]].reset_index(), on='Date', how='left')
+        forecast = m.predict(future)
+        pred = forecast.yhat.iloc[-1]
+        ci = forecast[['yhat_lower', 'yhat_upper']].iloc[-1].values
+        next_date = future.ds.iloc[-1]
+    
+    return pd.DataFrame({
+        'Date': [next_date],
+        'Predicted': [pred],
+        'Lower': [ci[0]],
+        'Upper': [ci[1]],
+        'Direction': ['Up' if pred > df.iloc[-1,-1] else 'Down']
+    })
+
+# Generate final predictions
+final_week_arima = final_retrain(weekly, 'arima', 'W')
+final_week_prophet = final_retrain(weekly, 'prophet', 'W')
+final_month_arima = final_retrain(monthly, 'arima', 'M')
+final_month_prophet = final_retrain(monthly, 'prophet', 'M')
+
+# ----------------------------
+# 7. Scenario Analysis
+# ----------------------------
+def scenario_analysis(base_data, kbd_increase, model_type='arima', freq='W'):
+    # Create scenario data
+    scenario_data = base_data.copy()
+    last_date = scenario_data.index[-1]
+    
+    # Adjust exports
+    scenario_data['Exp_TD3C_KBD'] += kbd_increase
+    
+    # Get prediction
+    if model_type == 'arima':
+        model = auto_arima(base_data.iloc[:,-1], 
+                          exogenous=base_data[features_weekly if freq=='W' else features_monthly],
+                          seasonal=True)
+        pred, ci = model.predict(n_periods=1, 
+                                exogenous=scenario_data.iloc[[-1],:-1], 
+                                return_conf_int=True)
+    else:
+        prophet_df = base_data.reset_index().rename(columns={'Date':'ds', base_data.columns[-1]:'y'})
+        m = Prophet()
+        for col in features_weekly if freq=='W' else features_monthly:
+            m.add_regressor(col)
+        m.fit(prophet_df)
+        future = m.make_future_dataframe(periods=1, freq=freq)
+        future = future.merge(scenario_data.iloc[[-1],:-1].reset_index(), 
+                            on='Date', how='left')
+        forecast = m.predict(future)
+        pred = forecast.yhat.iloc[-1]
+        ci = forecast[['yhat_lower', 'yhat_upper']].iloc[-1].values
+    
+    return pred, ci
+
+# Example: 1500 KBD increase scenario
+kbd_scenario = 1500
+base_case = weekly.iloc[-1:].copy()  # Use last available week
+
+# Weekly ARIMA scenario
+scenario_pred, scenario_ci = scenario_analysis(base_case, kbd_scenario)
+print(f"\nScenario Analysis (1500 KBD Increase):")
+print(f"Predicted Price: {scenario_pred[0]:.2f}")
+print(f"Confidence Interval: {scenario_ci[0][0]:.2f} - {scenario_ci[0][1]:.2f}")
+
+
+
+#=======================
 
 import torch
 import torch.nn as nn
