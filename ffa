@@ -1,3 +1,282 @@
+
+import pandas as pd
+import numpy as np
+from datetime import datetime, timedelta
+import matplotlib.pyplot as plt
+from pmdarima import auto_arima
+from prophet import Prophet
+from sklearn.metrics import mean_absolute_error, mean_squared_error, accuracy_score
+from statsmodels.stats.outliers_influence import variance_inflation_factor
+import warnings
+warnings.filterwarnings('ignore')
+
+# --------------------------------------------------
+# 1. Data Preparation & Feature Selection
+# --------------------------------------------------
+def load_data(freq='W'):
+    """Load preprocessed weekly/monthly data"""
+    df = pd.read_csv(f'td3c_{freq}.csv', parse_dates=['Date'], index_col='Date')
+    df = df.asfreq(freq)  # Set frequency
+    df = df.sort_index()
+    
+    # Remove incomplete periods
+    cutoff = df.index.max() - (pd.DateOffset(weeks=1) if freq == 'W' else pd.DateOffset(months=1))
+    df = df[df.index <= cutoff]
+    
+    # Create directional target
+    df[f'Direction'] = np.where(df[f'WS_Spot_next_{freq[0].lower()}'].diff() > 0, 1, 0)
+    return df
+
+weekly_data = load_data('W')
+monthly_data = load_data('M')
+
+# --------------------------------------------------
+# 2. Train-Validation-Test Split (Time-Based)
+# --------------------------------------------------
+def temporal_split(df, val_size=0.2, test_size=0.2):
+    dates = df.index.sort_values()
+    test_cutoff = dates[-int(len(dates)*test_size)]
+    val_cutoff = dates[-int(len(dates)*(test_size+val_size))]
+    
+    train = df.loc[:val_cutoff - timedelta(days=1)]
+    val = df.loc[val_cutoff:test_cutoff - timedelta(days=1)]
+    test = df.loc[test_cutoff:]
+    return train, val, test
+
+# Weekly split
+train_w, val_w, test_w = temporal_split(weekly_data)
+# Monthly split
+train_m, val_m, test_m = temporal_split(monthly_data)
+
+# --------------------------------------------------
+# 3. Model Building & Evaluation Framework
+# --------------------------------------------------
+class TSModel:
+    def __init__(self, freq='W'):
+        self.freq = freq
+        self.model = None
+        
+    def train(self, train_df, val_df=None):
+        """Train model with validation for parameter tuning"""
+        pass
+    
+    def predict(self, test_df):
+        """Return predictions with confidence intervals"""
+        pass
+    
+    def evaluate(self, actual, preds, ci):
+        """Calculate metrics and plot results"""
+        metrics = {
+            'MAE': mean_absolute_error(actual, preds),
+            'RMSE': np.sqrt(mean_squared_error(actual, preds)),
+            'Direction_Acc': accuracy_score(actual['Direction'], (preds.diff() > 0).astype(int))
+        }
+        
+        plt.figure(figsize=(12,6))
+        plt.plot(actual.index, actual[f'WS_Spot_next_{self.freq[0].lower()}'], label='Actual')
+        plt.plot(actual.index, preds, label='Predicted')
+        plt.fill_between(actual.index, ci[:,0], ci[:,1], alpha=0.2)
+        plt.title(f'{self.__class__.__name__} {self.freq} Forecast Performance')
+        plt.legend()
+        plt.show()
+        
+        return metrics
+
+# --------------------------------------------------
+# 4. Auto ARIMA Implementation
+# --------------------------------------------------
+class ARIMAModel(TSModel):
+    def train(self, train_df, val_df=None):
+        y_train = train_df[f'WS_Spot_next_{self.freq[0].lower()}']
+        X_train = train_df.drop(columns=[f'WS_Spot_next_{self.freq[0].lower()}','Direction'])
+        
+        self.model = auto_arima(
+            y_train, exogenous=X_train,
+            seasonal=True, m=4 if self.freq == 'W' else 12,
+            stepwise=True, trace=True,
+            error_action='ignore'
+        )
+        return self
+    
+    def predict(self, test_df):
+        X_test = test_df.drop(columns=[f'WS_Spot_next_{self.freq[0].lower()}','Direction'])
+        preds, conf_int = self.model.predict(
+            n_periods=len(test_df),
+            exogenous=X_test,
+            return_conf_int=True
+        )
+        return preds, conf_int
+
+# --------------------------------------------------
+# 5. Prophet Implementation
+# --------------------------------------------------
+class ProphetModel(TSModel):
+    def train(self, train_df, val_df=None):
+        self.model = Prophet(
+            yearly_seasonality=True,
+            weekly_seasonality=(self.freq == 'W'),
+            uncertainty_samples=100
+        )
+        
+        # Add all regressors except targets
+        for col in train_df.columns:
+            if col not in [f'WS_Spot_next_{self.freq[0].lower()}','Direction']:
+                self.model.add_regressor(col)
+                
+        train_data = train_df.reset_index().rename(
+            columns={'Date':'ds', f'WS_Spot_next_{self.freq[0].lower()}':'y'}
+        )
+        self.model.fit(train_data)
+        return self
+    
+    def predict(self, test_df):
+        future = self.model.make_future_dataframe(
+            periods=len(test_df),
+            freq=self.freq,
+            include_history=False
+        )
+        
+        # Merge exogenous variables
+        future = future.merge(
+            test_df.reset_index(),
+            left_on='ds', right_on='Date'
+        )
+        
+        forecast = self.model.predict(future)
+        return forecast['yhat'].values, forecast[['yhat_lower','yhat_upper']].values
+
+# --------------------------------------------------
+# 6. Model Execution & Validation
+# --------------------------------------------------
+def run_pipeline(freq='W'):
+    # Initialize models
+    models = [ARIMAModel(freq), ProphetModel(freq)]
+    results = {}
+    
+    # Load data
+    train, val, test = temporal_split(weekly_data) if freq == 'W' else temporal_split(monthly_data)
+    
+    for model in models:
+        print(f'\nTraining {model.__class__.__name__} ({freq})...')
+        # Train on train+val (for final model)
+        full_train = pd.concat([train, val])
+        model.train(full_train)
+        
+        # Predict on test
+        preds, ci = model.predict(test)
+        actual = test[[f'WS_Spot_next_{freq[0].lower()}','Direction']]
+        
+        # Evaluate
+        metrics = model.evaluate(actual, preds, ci)
+        results[model.__class__.__name__] = {
+            'metrics': metrics,
+            'predictions': preds,
+            'ci': ci
+        }
+    
+    return results
+
+# Run for both frequencies
+weekly_results = run_pipeline('W')
+monthly_results = run_pipeline('M')
+
+# --------------------------------------------------
+# 7. Full Retraining & Final Predictions
+# --------------------------------------------------
+def retrain_and_predict(df, model_class, freq='W'):
+    model = model_class(freq)
+    model.train(df)
+    
+    # Create future dataframe
+    last_date = df.index.max()
+    future_date = last_date + (7 if freq == 'W' else 30)
+    
+    # For ARIMA - need exogenous variables
+    if model_class == ARIMAModel:
+        X_future = df.drop(columns=[f'WS_Spot_next_{freq[0].lower()}','Direction']).iloc[[-1]]
+        pred, ci = model.model.predict(n_periods=1, exogenous=X_future, return_conf_int=True)
+    else:
+        future = pd.DataFrame({'ds': [future_date]})
+        future = future.merge(df.reset_index(), how='cross').iloc[:1]  # Propagate features
+        forecast = model.model.predict(future)
+        pred, ci = forecast['yhat'].values[0], forecast[['yhat_lower','yhat_upper']].values[0]
+    
+    return {
+        'date': future_date,
+        'prediction': pred,
+        'lower': ci[0],
+        'upper': ci[1],
+        'direction': 'Up' if pred > df.iloc[-1][f'WS_Spot_next_{freq[0].lower()}'] else 'Down'
+    }
+
+# Example usage for next week prediction
+final_weekly_pred = retrain_and_predict(weekly_data, ARIMAModel, 'W')
+print("\nFinal Weekly Prediction:")
+print(final_weekly_pred)
+
+# --------------------------------------------------
+# 8. Scenario Analysis Engine
+# --------------------------------------------------
+def run_scenario(base_df, model_class, scenario_params, freq='W'):
+    """Simulate different export scenarios
+    scenario_params: dict of {variable: [(change_value, change_type)]}
+    Example: {'Exp_TD3C_KBD': [(500, 'absolute'), (1500, 'absolute')]}
+    """
+    results = []
+    model = model_class(freq)
+    model.train(base_df)
+    
+    for var, changes in scenario_params.items():
+        for change in changes:
+            # Clone last period data
+            future_data = base_df.iloc[[-1]].copy()
+            
+            # Apply change
+            if change[1] == 'absolute':
+                future_data[var] += change[0]
+            elif change[1] == 'percentage':
+                future_data[var] *= (1 + change[0]/100)
+            
+            # Predict
+            if model_class == ARIMAModel:
+                pred, ci = model.model.predict(
+                    n_periods=1,
+                    exogenous=future_data.drop(columns=[f'WS_Spot_next_{freq[0].lower()}','Direction']),
+                    return_conf_int=True
+                )
+            else:
+                future_ds = pd.DataFrame({'ds': [base_df.index[-1] + (7 if freq=='W' else 30)]})
+                future_df = future_ds.merge(future_data.reset_index(), how='cross')
+                forecast = model.model.predict(future_df)
+                pred, ci = forecast['yhat'].values[0], forecast[['yhat_lower','yhat_upper']].values[0]
+            
+            results.append({
+                'variable': var,
+                'change': change,
+                'prediction': pred,
+                'ci_lower': ci[0],
+                'ci_upper': ci[1]
+            })
+    
+    return pd.DataFrame(results)
+
+# Example scenario analysis
+scenario_results = run_scenario(
+    weekly_data,
+    ARIMAModel,
+    scenario_params={
+        'Exp_TD3C_KBD': [(500, 'absolute'), (1500, 'absolute')],
+        'laden_perc': [(10, 'percentage')]
+    },
+    freq='W'
+)
+
+print("\nScenario Analysis Results:")
+print(scenario_results)
+
+#========
+
+
 # -*- coding: utf-8 -*-
 import pandas as pd
 import numpy as np
