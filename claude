@@ -1,273 +1,263 @@
-import torch
-import torch.nn as nn
-import torch.optim as optim
-import numpy as np
 import pandas as pd
-from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import mean_absolute_error
-from torch.utils.data import Dataset, DataLoader
-import pmdarima as pm
-from statsmodels.tsa.stattools import adfuller
-import matplotlib.pyplot as plt
-from tqdm import tqdm
+import numpy as np
+from datetime import datetime, timedelta
+from statsmodels.tsa.statespace.sarimax import SARIMAX
+from prophet import Prophet
+from sklearn.metrics import mean_absolute_error, mean_squared_error
+import warnings
+warnings.filterwarnings('ignore')
 
-class TD3CPredictionPipeline:
-    def __init__(self, window_size=30, n_iterations=100):
-        self.window_size = window_size
-        self.n_iterations = n_iterations
-        self.scaler = StandardScaler()
-        self.lstm_model = None
+class TD3CForecaster:
+    def __init__(self, freq='W'):
+        """
+        Initialize TD3C forecaster
+        freq: 'W' for weekly or 'M' for monthly
+        """
+        self.freq = freq
+        self.prophet_model = None
         self.arima_model = None
         
     def preprocess_data(self, df):
-        """Preprocess data with feature engineering"""
-        df = df.copy()
-        df['WS_Spot_next_day'] = df['WS_Spot'].shift(-1)
+        """
+        Preprocess the input data
+        """
+        # Convert date column to datetime
+        df['Date'] = pd.to_datetime(df['Date'])
         
-        # Lag features
-        for col in ['WS_Spot', 'brent_price', 'laden_perc']:
-            df[f'{col}_lag1'] = df[col].shift(1)
+        # Create target variables for next period
+        if self.freq == 'W':
+            df['WS_Spot_next'] = df.groupby(df['Date'].dt.isocalendar().week)['WS_Spot'].shift(-1)
+        else:  # Monthly
+            df['WS_Spot_next'] = df.groupby(df['Date'].dt.to_period('M'))['WS_Spot'].shift(-1)
         
-        # Rolling means
-        for window in [7, 14]:
-            df[f'WS_Spot_ma_{window}'] = df['WS_Spot'].rolling(window=window).mean()
+        # Resample data to weekly/monthly frequency
+        df_resampled = df.resample(self.freq, on='Date').agg({
+            'laden_perc': 'mean',
+            'spread_perc_global': 'mean',
+            'laden_speed': 'mean',
+            'ballast_speed': 'mean',
+            'brent_price': 'mean',
+            'BDTI': 'mean',
+            'WS_Spot': 'mean',
+            'TD3C_TCE': 'mean',
+            'OSX': 'mean',
+            'OVX': 'mean',
+            'USD_SAR': 'mean',
+            'USD_CNY': 'mean',
+            'MFO_Fuj': 'mean',
+            'Exp_TD3C_KBD': 'mean',
+            'Count_VLCC': 'sum',
+            'WS_Spot_next': 'last'
+        })
         
-        # Handle monthly features
-        monthly_cols = ['Exp_TD3C_KBD', 'Count_VLCC']
-        for col in monthly_cols:
-            df[f'{col}_ma7'] = df[col].rolling(7).mean().fillna(method='ffill')
+        # Drop incomplete periods
+        df_resampled = df_resampled.dropna()
         
-        df = df.dropna()
-        return df
+        # Create additional features
+        df_resampled['WS_Spot_lag1'] = df_resampled['WS_Spot'].shift(1)
+        df_resampled['WS_Spot_lag2'] = df_resampled['WS_Spot'].shift(2)
+        df_resampled['brent_price_lag1'] = df_resampled['brent_price'].shift(1)
+        
+        # Create event dummy variables
+        df_resampled['covid_period'] = ((df_resampled.index >= '2020-03-01') & 
+                                      (df_resampled.index <= '2021-06-30')).astype(int)
+        df_resampled['russia_war'] = (df_resampled.index >= '2022-02-24').astype(int)
+        
+        # Identify price outliers
+        price_std = df_resampled['WS_Spot'].std()
+        price_mean = df_resampled['WS_Spot'].mean()
+        df_resampled['price_shock'] = ((df_resampled['WS_Spot'] > price_mean + 2.5 * price_std) | 
+                                     (df_resampled['WS_Spot'] < price_mean - 2.5 * price_std)).astype(int)
+        
+        return df_resampled
     
-    def train_evaluate_models(self, df, train_end='2023-12-31', val_end='2024-06-30'):
-        """Train and evaluate both LSTM and ARIMA models"""
-        # Split data
-        train_df = df[df['date'] <= train_end]
-        val_df = df[(df['date'] > train_end) & (df['date'] <= val_end)]
-        test_df = df[df['date'] > val_end]
+    def check_feature_importance(self, df):
+        """
+        Check feature importance and multicollinearity
+        """
+        # Calculate correlation matrix
+        corr_matrix = df.corr()
         
-        # Train and evaluate LSTM
-        lstm_results = self._train_evaluate_lstm(train_df, val_df, test_df)
+        # Identify highly correlated features (>0.8)
+        high_corr = np.where(np.abs(corr_matrix) > 0.8)
+        high_corr = [(corr_matrix.index[x], corr_matrix.columns[y], corr_matrix.iloc[x, y]) 
+                     for x, y in zip(*high_corr) if x != y and x < y]
         
-        # Train and evaluate ARIMA
-        arima_results = self._train_evaluate_arima(train_df, val_df, test_df)
-        
-        return lstm_results, arima_results
+        return high_corr
     
-    def _build_lstm_model(self, input_size):
-        """Build LSTM model"""
-        model = nn.Sequential(
-            nn.LSTM(input_size, 64, num_layers=2, dropout=0.2, batch_first=True),
-            nn.Linear(64, 1)
-        )
-        return model
+    def train_prophet(self, df, train_size=0.8):
+        """
+        Train Prophet model with sliding window
+        """
+        # Prepare data for Prophet
+        prophet_df = df.reset_index()
+        prophet_df = prophet_df.rename(columns={'Date': 'ds', 'WS_Spot': 'y'})
+        
+        # Initialize lists to store results
+        dates = []
+        actuals = []
+        predictions = []
+        lower_bounds = []
+        upper_bounds = []
+        
+        # Calculate split point
+        split_idx = int(len(df) * train_size)
+        
+        # Sliding window prediction
+        for i in range(split_idx, len(df)):
+            # Train data up to current point
+            train_df = prophet_df.iloc[:i]
+            
+            # Initialize and train Prophet model
+            model = Prophet(interval_width=0.95)
+            model.add_regressor('brent_price')
+            model.add_regressor('laden_perc')
+            model.add_regressor('Exp_TD3C_KBD')
+            model.fit(train_df)
+            
+            # Make prediction for next point
+            future = prophet_df.iloc[i:i+1][['ds', 'brent_price', 'laden_perc', 'Exp_TD3C_KBD']]
+            forecast = model.predict(future)
+            
+            dates.append(prophet_df.iloc[i]['ds'])
+            actuals.append(prophet_df.iloc[i]['y'])
+            predictions.append(forecast['yhat'].values[0])
+            lower_bounds.append(forecast['yhat_lower'].values[0])
+            upper_bounds.append(forecast['yhat_upper'].values[0])
+        
+        self.prophet_model = model
+        return pd.DataFrame({
+            'Date': dates,
+            'Actual': actuals,
+            'Predicted': predictions,
+            'Lower_Bound': lower_bounds,
+            'Upper_Bound': upper_bounds,
+            'Direction': np.where(np.array(predictions) > np.array(actuals).shift(1), 'Up', 'Down')
+        })
     
-    def _train_evaluate_lstm(self, train_df, val_df, test_df):
-        """Train and evaluate LSTM model with sliding window"""
-        # Scale features
-        feature_cols = [col for col in train_df.columns if col not in ['date', 'WS_Spot_next_day']]
-        X_train = self.scaler.fit_transform(train_df[feature_cols])
-        X_val = self.scaler.transform(val_df[feature_cols])
-        X_test = self.scaler.transform(test_df[feature_cols])
+    def train_arima(self, df, train_size=0.8):
+        """
+        Train Auto ARIMA model with sliding window
+        """
+        # Initialize lists to store results
+        dates = []
+        actuals = []
+        predictions = []
+        lower_bounds = []
+        upper_bounds = []
         
-        # Build and train model
-        self.lstm_model = self._build_lstm_model(len(feature_cols))
+        # Calculate split point
+        split_idx = int(len(df) * train_size)
         
-        # Train with sliding window
-        train_predictions = []
-        val_predictions = []
-        test_predictions = []
-        
-        print("Training LSTM...")
-        for i in tqdm(range(len(X_train) - self.window_size)):
-            # Get window
-            X_window = X_train[i:i+self.window_size]
-            y_true = train_df['WS_Spot_next_day'].iloc[i+self.window_size]
+        # Sliding window prediction
+        for i in range(split_idx, len(df)):
+            # Train data up to current point
+            train_data = df.iloc[:i]
             
-            # Train on window
-            self.lstm_model.train()
-            optimizer = optim.Adam(self.lstm_model.parameters())
-            criterion = nn.L1Loss()
+            # Fit SARIMAX model
+            model = SARIMAX(train_data['WS_Spot'],
+                          exog=train_data[['brent_price', 'laden_perc', 'Exp_TD3C_KBD']],
+                          order=(1, 1, 1),
+                          seasonal_order=(1, 1, 1, 12))
+            results = model.fit()
             
-            X_tensor = torch.FloatTensor(X_window).unsqueeze(0)
-            y_tensor = torch.FloatTensor([y_true])
+            # Make prediction for next point
+            forecast = results.get_forecast(steps=1, 
+                                         exog=df.iloc[i:i+1][['brent_price', 'laden_perc', 'Exp_TD3C_KBD']])
             
-            optimizer.zero_grad()
-            y_pred = self.lstm_model(X_tensor)
-            loss = criterion(y_pred, y_tensor)
-            loss.backward()
-            optimizer.step()
-            
-            train_predictions.append(y_pred.item())
+            dates.append(df.index[i])
+            actuals.append(df.iloc[i]['WS_Spot'])
+            predictions.append(forecast.predicted_mean[0])
+            lower_bounds.append(forecast.conf_int().iloc[0, 0])
+            upper_bounds.append(forecast.conf_int().iloc[0, 1])
         
-        # Validation predictions
-        self.lstm_model.eval()
-        with torch.no_grad():
-            for i in range(len(X_val) - self.window_size):
-                X_window = X_val[i:i+self.window_size]
-                X_tensor = torch.FloatTensor(X_window).unsqueeze(0)
-                y_pred = self.lstm_model(X_tensor)
-                val_predictions.append(y_pred.item())
-        
-        # Test predictions with range
-        test_results = []
-        self.lstm_model.train()  # Enable dropout for MC dropout
-        
-        for i in range(len(X_test) - self.window_size):
-            X_window = X_test[i:i+self.window_size]
-            X_tensor = torch.FloatTensor(X_window).unsqueeze(0)
-            
-            # Monte Carlo predictions for range
-            predictions = []
-            for _ in range(self.n_iterations):
-                with torch.no_grad():
-                    pred = self.lstm_model(X_tensor).item()
-                    predictions.append(pred)
-            
-            mean_pred = np.mean(predictions)
-            lower_bound = np.percentile(predictions, 10)
-            upper_bound = np.percentile(predictions, 90)
-            direction = np.sign(mean_pred - X_test[i+self.window_size-1, 0])
-            
-            test_results.append({
-                'Date': test_df.iloc[i+self.window_size]['date'],
-                'Actual': test_df.iloc[i+self.window_size]['WS_Spot_next_day'],
-                'Predicted': mean_pred,
-                'Lower_Bound': lower_bound,
-                'Upper_Bound': upper_bound,
-                'Direction': direction
-            })
-        
-        test_df = pd.DataFrame(test_results)
-        
-        return {
-            'train_mae': mean_absolute_error(train_df['WS_Spot_next_day'][self.window_size:], train_predictions),
-            'val_mae': mean_absolute_error(val_df['WS_Spot_next_day'][self.window_size:], val_predictions),
-            'test_results': test_df
-        }
+        self.arima_model = results
+        return pd.DataFrame({
+            'Date': dates,
+            'Actual': actuals,
+            'Predicted': predictions,
+            'Lower_Bound': lower_bounds,
+            'Upper_Bound': upper_bounds,
+            'Direction': np.where(np.array(predictions) > np.array(actuals).shift(1), 'Up', 'Down')
+        })
     
-    def _train_evaluate_arima(self, train_df, val_df, test_df):
-        """Train and evaluate ARIMA model"""
-        print("Training ARIMA...")
-        self.arima_model = pm.auto_arima(train_df['WS_Spot'],
-                                       start_p=1, start_q=1,
-                                       max_p=3, max_q=3,
-                                       m=1, seasonal=False,
-                                       d=1, trace=True,
-                                       error_action='ignore',
-                                       suppress_warnings=True)
+    def scenario_analysis(self, df, model_type='prophet', kbd_scenarios=[500, 1000, 1500]):
+        """
+        Perform scenario analysis with different KBD values
+        """
+        last_date = df.index[-1]
         
-        # Make predictions
-        train_predictions = self.arima_model.predict_in_sample()
-        val_predictions = self.arima_model.predict(n_periods=len(val_df))
+        if self.freq == 'W':
+            future_dates = [last_date + timedelta(weeks=1)]
+        else:
+            future_dates = [last_date + pd.offsets.MonthEnd(1)]
         
-        # Test predictions with confidence intervals
-        test_results = []
-        for i in range(len(test_df)):
-            pred, conf_int = self.arima_model.predict(n_periods=1, return_conf_int=True)
-            test_results.append({
-                'Date': test_df.iloc[i]['date'],
-                'Actual': test_df.iloc[i]['WS_Spot_next_day'],
-                'Predicted': pred[0],
-                'Lower_Bound': conf_int[0][0],
-                'Upper_Bound': conf_int[0][1],
-                'Direction': np.sign(pred[0] - test_df.iloc[i-1]['WS_Spot'] if i > 0 else 0)
-            })
-            # Update model
-            self.arima_model.update(test_df.iloc[i]['WS_Spot'])
+        scenario_results = []
         
-        test_df = pd.DataFrame(test_results)
+        for kbd in kbd_scenarios:
+            if model_type == 'prophet':
+                future = pd.DataFrame({
+                    'ds': future_dates,
+                    'brent_price': [df['brent_price'].iloc[-1]],
+                    'laden_perc': [df['laden_perc'].iloc[-1]],
+                    'Exp_TD3C_KBD': [kbd]
+                })
+                forecast = self.prophet_model.predict(future)
+                scenario_results.append({
+                    'KBD_Scenario': kbd,
+                    'Predicted_Price': forecast['yhat'].values[0],
+                    'Lower_Bound': forecast['yhat_lower'].values[0],
+                    'Upper_Bound': forecast['yhat_upper'].values[0]
+                })
+            else:  # ARIMA
+                forecast = self.arima_model.get_forecast(
+                    steps=1,
+                    exog=[[df['brent_price'].iloc[-1], df['laden_perc'].iloc[-1], kbd]]
+                )
+                scenario_results.append({
+                    'KBD_Scenario': kbd,
+                    'Predicted_Price': forecast.predicted_mean[0],
+                    'Lower_Bound': forecast.conf_int().iloc[0, 0],
+                    'Upper_Bound': forecast.conf_int().iloc[0, 1]
+                })
         
-        return {
-            'train_mae': mean_absolute_error(train_df['WS_Spot_next_day'], train_predictions),
-            'val_mae': mean_absolute_error(val_df['WS_Spot_next_day'], val_predictions),
-            'test_results': test_df
-        }
-    
-    def predict_next_day(self, df, model_type='lstm'):
-        """Predict next day using full dataset"""
-        # Preprocess latest data
-        latest_data = self.preprocess_data(df)
-        
-        if model_type.lower() == 'lstm':
-            # Retrain LSTM on full dataset
-            feature_cols = [col for col in latest_data.columns if col not in ['date', 'WS_Spot_next_day']]
-            X = self.scaler.fit_transform(latest_data[feature_cols])
-            
-            # Get latest window
-            X_window = X[-self.window_size:]
-            X_tensor = torch.FloatTensor(X_window).unsqueeze(0)
-            
-            # Monte Carlo predictions
-            predictions = []
-            self.lstm_model.train()
-            for _ in range(self.n_iterations):
-                with torch.no_grad():
-                    pred = self.lstm_model(X_tensor).item()
-                    predictions.append(pred)
-            
-            next_day = latest_data.iloc[-1]['date'] + pd.Timedelta(days=1)
-            return {
-                'Date': next_day,
-                'Predicted': np.mean(predictions),
-                'Lower_Bound': np.percentile(predictions, 10),
-                'Upper_Bound': np.percentile(predictions, 90),
-                'Direction': np.sign(np.mean(predictions) - latest_data.iloc[-1]['WS_Spot'])
-            }
-        
-        else:  # ARIMA
-            pred, conf_int = self.arima_model.predict(n_periods=1, return_conf_int=True)
-            next_day = latest_data.iloc[-1]['date'] + pd.Timedelta(days=1)
-            return {
-                'Date': next_day,
-                'Predicted': pred[0],
-                'Lower_Bound': conf_int[0][0],
-                'Upper_Bound': conf_int[0][1],
-                'Direction': np.sign(pred[0] - latest_data.iloc[-1]['WS_Spot'])
-            }
-    
-    def scenario_analysis(self, df, export_increase, model_type='lstm'):
-        """Perform scenario analysis with modified export values"""
-        # Modify export data
-        scenario_df = df.copy()
-        scenario_df['Exp_TD3C_KBD'] += export_increase
-        
-        # Get prediction with modified data
-        return self.predict_next_day(scenario_df, model_type)
+        return pd.DataFrame(scenario_results)
 
 # Usage example
 def main():
     # Load your data
-    df = pd.read_csv('td3c_data.csv', parse_dates=['date'])
+    # df = pd.read_csv('your_data.csv')
     
-    # Initialize pipeline
-    pipeline = TD3CPredictionPipeline()
+    # Initialize forecasters
+    weekly_forecaster = TD3CForecaster(freq='W')
+    monthly_forecaster = TD3CForecaster(freq='M')
     
-    # Train and evaluate models
-    lstm_results, arima_results = pipeline.train_evaluate_models(df)
+    # Preprocess data
+    weekly_data = weekly_forecaster.preprocess_data(df)
+    monthly_data = monthly_forecaster.preprocess_data(df)
     
-    # Print results
-    for model_name, results in [('LSTM', lstm_results), ('ARIMA', arima_results)]:
-        print(f"\n{model_name} Results:")
-        print(f"Train MAE: {results['train_mae']:.2f}")
-        print(f"Validation MAE: {results['val_mae']:.2f}")
-        print("\nTest Results:")
-        print(results['test_results'].head())
+    # Check feature importance
+    weekly_correlations = weekly_forecaster.check_feature_importance(weekly_data)
+    monthly_correlations = monthly_forecaster.check_feature_importance(monthly_data)
     
-    # Get user input for model selection
-    model_choice = input("Choose model for prediction (lstm/arima): ").lower()
+    # Train models and get predictions
+    weekly_prophet_results = weekly_forecaster.train_prophet(weekly_data)
+    weekly_arima_results = weekly_forecaster.train_arima(weekly_data)
     
-    # Predict next day
-    next_day_pred = pipeline.predict_next_day(df, model_choice)
-    print("\nNext Day Prediction:")
-    print(next_day_pred)
+    monthly_prophet_results = monthly_forecaster.train_prophet(monthly_data)
+    monthly_arima_results = monthly_forecaster.train_arima(monthly_data)
     
-    # Scenario analysis
-    export_increase = float(input("Enter export increase in KBD: "))
-    scenario_pred = pipeline.scenario_analysis(df, export_increase, model_choice)
-    print("\nScenario Analysis Prediction:")
-    print(scenario_pred)
+    # Perform scenario analysis
+    weekly_prophet_scenarios = weekly_forecaster.scenario_analysis(
+        weekly_data, 'prophet', [500, 1000, 1500]
+    )
+    monthly_prophet_scenarios = monthly_forecaster.scenario_analysis(
+        monthly_data, 'prophet', [500, 1000, 1500]
+    )
+    
+    return (weekly_prophet_results, weekly_arima_results,
+            monthly_prophet_results, monthly_arima_results,
+            weekly_prophet_scenarios, monthly_prophet_scenarios)
 
 if __name__ == "__main__":
     main()
