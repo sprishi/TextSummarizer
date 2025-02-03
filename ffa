@@ -1,31 +1,42 @@
 
 import streamlit as st
 
-# Add container-specific scaling
-st.markdown("""
+# Slider for dynamic scaling (default to 70%)
+scale_percent = st.slider("Adjust Scaling", min_value=50, max_value=100, value=70, step=5) / 100
+
+# Calculate derived CSS values
+scale_factor = scale_percent
+container_width = 100 / scale_factor  # Inverse of scaling
+margin_left = -(1 - scale_factor) / 2 * 100  # Center the scaled container
+
+# Dynamic CSS based on slider value
+dynamic_css = f"""
 <style>
-    .scaled-container {
-        transform: scale(0.85);
+    .scaled-container {{
+        transform: scale({scale_factor});
         transform-origin: top left;
-        width: 117.65%; /* 100% / 0.85 */
-        margin-left: -8.5%; /* (1 - 0.85) / 2 */
-        padding-bottom: 15%; /* Prevent content clipping */
-    }
+        width: {container_width}%;
+        margin-left: {margin_left}%;
+        padding-bottom: {20 * (1 - scale_factor)}%; /* Prevent content clipping */
+    }}
     
     /* Fix checkbox sizes */
-    .scaled-container .stCheckbox label {
-        font-size: 1.15em;
-        transform: scale(1.15);
+    .scaled-container .stCheckbox label {{
+        font-size: {1 / scale_factor}em;
+        transform: scale({1 / scale_factor});
         transform-origin: left;
-    }
+    }}
     
     /* Fix button sizes */
-    .scaled-container .stButton button {
-        transform: scale(1.15);
+    .scaled-container .stButton button {{
+        transform: scale({1 / scale_factor});
         transform-origin: left;
-    }
+    }}
 </style>
-""", unsafe_allow_html=True)
+"""
+
+# Inject dynamic CSS
+st.markdown(dynamic_css, unsafe_allow_html=True)
 
 # Your content inside scaled container
 with st.markdown('<div class="scaled-container">', unsafe_allow_html=True):
@@ -47,6 +58,9 @@ with st.markdown('<div class="scaled-container">', unsafe_allow_html=True):
 
 # Close the scaled container
 st.markdown('</div>', unsafe_allow_html=True)
+
+
+
 #>>>>>>>>
 
 
