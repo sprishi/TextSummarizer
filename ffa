@@ -1,43 +1,52 @@
 
-# In your specific page file (e.g., AnalysisPage.py)
-def show():
-    # Inject page-specific scaling
-    st.markdown("""
-    <style>
-        /* Target only the main content area */
-        div[data-testid="stAppViewContainer"] > div[data-testid="stAppViewBlockContainer"] {
-            transform: scale(0.8);
-            transform-origin: top left;
-            width: 125%; /* 100% / 0.8 = 125% */
-            height: 125%;
-            padding-bottom: 25vh !important;
-        }
-        
-        /* Fix sidebar positions */
-        [data-testid="stSidebar"] {
-            transform: scale(0.8);
-            transform-origin: top left;
-            height: 125vh !important;
-            top: -5vh !important;
-        }
-        
-        /* Maintain readability */
-        body {
-            font-size: 1.1rem !important; /* Compensate for scaling */
-        }
-        
-        /* Fix checkbox sizes */
-        .stCheckbox label {
-            font-size: 1.1em !important;
-            transform: scale(1.15);
-            transform-origin: left;
-        }
-    </style>
-    """, unsafe_allow_html=True)
+import streamlit as st
 
-    # Your page content here
-    st.write("Your scaled content...")
+# Add container-specific scaling
+st.markdown("""
+<style>
+    .scaled-container {
+        transform: scale(0.85);
+        transform-origin: top left;
+        width: 117.65%; /* 100% / 0.85 */
+        margin-left: -8.5%; /* (1 - 0.85) / 2 */
+        padding-bottom: 15%; /* Prevent content clipping */
+    }
+    
+    /* Fix checkbox sizes */
+    .scaled-container .stCheckbox label {
+        font-size: 1.15em;
+        transform: scale(1.15);
+        transform-origin: left;
+    }
+    
+    /* Fix button sizes */
+    .scaled-container .stButton button {
+        transform: scale(1.15);
+        transform-origin: left;
+    }
+</style>
+""", unsafe_allow_html=True)
 
+# Your content inside scaled container
+with st.markdown('<div class="scaled-container">', unsafe_allow_html=True):
+    with st.container():
+        # Example: Grid of checkboxes
+        cols = st.columns(5)
+        for i in range(20):
+            with cols[i % 5]:
+                st.checkbox(f"Option {i+1}", key=f"opt_{i}")
+        
+        # Example: Chart
+        st.line_chart({"data": [1, 5, 2, 6, 2, 1]})
+        
+        # Example: Table
+        st.dataframe({
+            "Column 1": [1, 2, 3, 4, 5],
+            "Column 2": ["A", "B", "C", "D", "E"]
+        })
+
+# Close the scaled container
+st.markdown('</div>', unsafe_allow_html=True)
 #>>>>>>>>
 
 
