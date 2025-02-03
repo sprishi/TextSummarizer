@@ -1,4 +1,53 @@
 
+import streamlit as st
+
+# Unique CSS class names for this page
+PAGE_SPECIFIC_CSS = """
+<style>
+    /* Scoped to this page only */
+    .right-sidebar-analysis-page {
+        position: fixed;
+        right: 0;
+        top: 88px;
+        width: 300px;
+        height: calc(100vh - 100px);
+        background: #f0f2f6;
+        padding: 20px;
+        border-left: 1px solid #ddd;
+        z-index: 999;
+        overflow-y: auto;
+    }
+
+    .main-content-analysis-page {
+        margin-right: 320px !important;
+    }
+</style>
+"""
+
+def show():
+    # Inject page-specific CSS
+    st.markdown(PAGE_SPECIFIC_CSS, unsafe_allow_html=True)
+    
+    # Right sidebar
+    with st.markdown('<div class="right-sidebar-analysis-page">', unsafe_allow_html=True):
+        # Your options components here
+        st.header("Analysis Options")
+        for i in range(1, 21):
+            st.checkbox(f"Option {i}", key=f"analysis_opt_{i}")
+    
+    # Main content
+    with st.markdown('<div class="main-content-analysis-page">', unsafe_allow_html=True):
+        # Your chart and table
+        st.plotly_chart(...)
+        st.dataframe(...)
+    
+    # Close divs
+    st.markdown('</div></div>', unsafe_allow_html=True)
+
+
+#>>>>>>>>
+
+
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
