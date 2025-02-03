@@ -1,49 +1,42 @@
 
-import streamlit as st
-
-# Unique CSS class names for this page
-PAGE_SPECIFIC_CSS = """
-<style>
-    /* Scoped to this page only */
-    .right-sidebar-analysis-page {
-        position: fixed;
-        right: 0;
-        top: 88px;
-        width: 300px;
-        height: calc(100vh - 100px);
-        background: #f0f2f6;
-        padding: 20px;
-        border-left: 1px solid #ddd;
-        z-index: 999;
-        overflow-y: auto;
-    }
-
-    .main-content-analysis-page {
-        margin-right: 320px !important;
-    }
-</style>
-"""
-
+# In your specific page file (e.g., AnalysisPage.py)
 def show():
-    # Inject page-specific CSS
-    st.markdown(PAGE_SPECIFIC_CSS, unsafe_allow_html=True)
-    
-    # Right sidebar
-    with st.markdown('<div class="right-sidebar-analysis-page">', unsafe_allow_html=True):
-        # Your options components here
-        st.header("Analysis Options")
-        for i in range(1, 21):
-            st.checkbox(f"Option {i}", key=f"analysis_opt_{i}")
-    
-    # Main content
-    with st.markdown('<div class="main-content-analysis-page">', unsafe_allow_html=True):
-        # Your chart and table
-        st.plotly_chart(...)
-        st.dataframe(...)
-    
-    # Close divs
-    st.markdown('</div></div>', unsafe_allow_html=True)
+    # Inject page-specific scaling
+    st.markdown("""
+    <style>
+        /* Target only the main content area */
+        div[data-testid="stAppViewContainer"] > div[data-testid="stAppViewBlockContainer"] {
+            transform: scale(0.8);
+            transform-origin: top left;
+            width: 125%; /* 100% / 0.8 = 125% */
+            height: 125%;
+            padding-bottom: 25vh !important;
+        }
+        
+        /* Fix sidebar positions */
+        [data-testid="stSidebar"] {
+            transform: scale(0.8);
+            transform-origin: top left;
+            height: 125vh !important;
+            top: -5vh !important;
+        }
+        
+        /* Maintain readability */
+        body {
+            font-size: 1.1rem !important; /* Compensate for scaling */
+        }
+        
+        /* Fix checkbox sizes */
+        .stCheckbox label {
+            font-size: 1.1em !important;
+            transform: scale(1.15);
+            transform-origin: left;
+        }
+    </style>
+    """, unsafe_allow_html=True)
 
+    # Your page content here
+    st.write("Your scaled content...")
 
 #>>>>>>>>
 
