@@ -1,0 +1,64 @@
+st.sidebar.header("Filters")
+date_filter = st.sidebar.date_input("Date Range", [df['Date'].min(), df['Date'].max()])
+grades = st.sidebar.multiselect("Select Grades", df['Grade'].unique())
+delivery_mode = st.sidebar.selectbox("Delivery Mode", ['All'] + list(df['Del. Mode'].unique()))
+
+col1, col2, col3 = st.columns(3)
+with col1:
+    st.metric("Total Tenders", len(filtered_df))
+with col2:
+    st.metric("Total Volume (t)", filtered_df['Volume'].sum())
+with col3:
+    st.metric("Avg. Price", filtered_df['Price'].mean())
+
+st.subheader("Tender Relationships")
+matrix_view = st.radio("View Mode:", ["Count", "Volume"], horizontal=True)
+
+pivot_df = filtered_df.pivot_table(
+    index='Seller', 
+    columns='Buyer', 
+    values='Volume' if matrix_view == "Volume" else 'Date',
+    aggfunc='sum' if matrix_view == "Volume" else 'count'
+)
+
+fig = px.imshow(pivot_df.fillna(0), 
+               labels=dict(x="Buyer", y="Seller", color=matrix_view))
+st.plotly_chart(fig, use_container_width=True)
+
+st.subheader("Temporal Trends")
+trend_view = st.selectbox("Analyze by:", ["Tender Date", "Loading Date"])
+
+if trend_view == "Loading Date":
+    date_col = 'Loading Date From'  # or create weighted date range
+else:
+    date_col = 'Date'
+
+trend_df = filtered_df.groupby([pd.Grouper(key=date_col, freq='M'), 'Grade']).agg({
+    'Volume': 'sum',
+    'Price': 'mean'
+}).reset_index()
+
+fig = px.bar(trend_df, x=date_col, y='Volume', color='Grade',
+             title="Volume Trend")
+st.plotly_chart(fig, use_container_width=True)
+
+fig2 = px.line(trend_df, x=date_col, y='Price', color='Grade',
+              title="Price Trend")
+st.plotly_chart(fig2, use_container_width=True)
+
+st.subheader("Price Insights")
+tab1, tab2 = st.tabs(["By Grade", "Correlations"])
+
+with tab1:
+    fig = px.box(filtered_df, x='Grade', y='Price', color='Del. Mode')
+    st.plotly_chart(fig, use_container_width=True)
+
+with tab2:
+    fig = px.scatter(filtered_df, x='Volume', y='Price', 
+                    color='Grade', hover_data=['Basis'])
+    st.plotly_chart(fig, use_container_width=True)
+
+st.subheader("Loading Patterns")
+fig = px.histogram(filtered_df, x='Loading Duration', 
+                  nbins=20, title="Loading Duration Distribution")
+st.plotly_chart(fig, use_container_width=True)
