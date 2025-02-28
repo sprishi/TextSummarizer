@@ -1,4 +1,84 @@
 
+
+
+
+import streamlit as st
+
+# Initialize session state for font size
+if 'font_size' not in st.session_state:
+    st.session_state.font_size = 'medium'
+
+# Add font size selector to sidebar
+with st.sidebar:
+    st.subheader("Font Size Settings")
+    font_size = st.selectbox(
+        "Select Font Size",
+        ("Small", "Medium", "Large"),
+        index=["Small", "Medium", "Large"].index(st.session_state.font_size.capitalize())
+    )
+
+# Update session state
+st.session_state.font_size = font_size.lower()
+
+# Create CSS style based on selection
+font_sizes = {
+    'small': {
+        'font-size': '14px',
+        'h1': '28px',
+        'h2': '22px',
+        'h3': '18px'
+    },
+    'medium': {
+        'font-size': '16px',
+        'h1': '32px',
+        'h2': '24px',
+        'h3': '20px'
+    },
+    'large': {
+        'font-size': '18px',
+        'h1': '36px',
+        'h2': '28px',
+        'h3': '24px'
+    }
+}
+
+selected_size = font_sizes[st.session_state.font_size]
+
+# Inject CSS with markdown
+st.markdown(f"""
+    <style>
+        html {{
+            font-size: {selected_size['font-size']} !important;
+        }}
+        h1 {{
+            font-size: {selected_size['h1']} !important;
+        }}
+        h2 {{
+            font-size: {selected_size['h2']} !important;
+        }}
+        h3 {{
+            font-size: {selected_size['h3']} !important;
+        }}
+        .stDataFrame {{
+            font-size: {selected_size['font-size']} !important;
+        }}
+        p, .stMarkdown {{
+            font-size: {selected_size['font-size']} !important;
+        }}
+    </style>
+    """, unsafe_allow_html=True)
+
+# Your app content here
+st.title("Customizable Font Size App")
+st.write("This text will change size based on your selection!")
+st.dataframe({"A": [1, 2, 3], "B": [4, 5, 6]})
+
+
+
+
+#~~~~~~
+
+
 import streamlit as st
 
 # Slider for dynamic scaling (default to 70%)
