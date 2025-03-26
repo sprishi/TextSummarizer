@@ -2,6 +2,96 @@
 import pandas as pd
 
 def map_mq_region(df, mapping_table):
+    # Create copy with original index
+    result_df = df.copy()
+    original_index = result_df.index
+    
+    # For load mapping
+    # 1. Join on port and country
+    load_merge1 = pd.merge(result_df, 
+                          mapping_table, 
+                          how='left',
+                          left_on=['loadport', 'loadcountry'],
+                          right_on=['port', 'country'],
+                          suffixes=('', '_map'))
+    
+    # Initialize mq_region columns with first merge results
+    result_df['load_mq_region'] = load_merge1['mq_region'].values
+    
+    # 2. For missing values, merge on country
+    missing_load = result_df[result_df['load_mq_region'].isna()].copy()
+    if not missing_load.empty:
+        load_merge2 = pd.merge(missing_load, 
+                              mapping_table, 
+                              how='left',
+                              left_on=['loadcountry'],
+                              right_on=['country'],
+                              suffixes=('', '_map'))
+        
+        # Update only missing values using index alignment
+        result_df.loc[load_merge2.index, 'load_mq_region'] = load_merge2['mq_region'].values
+    
+    # 3. For remaining missing values, merge on region
+    missing_load = result_df[result_df['load_mq_region'].isna()].copy()
+    if not missing_load.empty:
+        load_merge3 = pd.merge(missing_load, 
+                              mapping_table, 
+                              how='left',
+                              left_on=['loadregion'],
+                              right_on=['region'],
+                              suffixes=('', '_map'))
+        
+        result_df.loc[load_merge3.index, 'load_mq_region'] = load_merge3['mq_region'].values
+    
+    # For discharge mapping
+    # 1. Join on port and country
+    discharge_merge1 = pd.merge(result_df, 
+                              mapping_table, 
+                              how='left',
+                              left_on=['dischargeport', 'dischargecountry'],
+                              right_on=['port', 'country'],
+                              suffixes=('', '_map'))
+    
+    result_df['discharge_mq_region'] = discharge_merge1['mq_region'].values
+    
+    # 2. For missing values, merge on country
+    missing_discharge = result_df[result_df['discharge_mq_region'].isna()].copy()
+    if not missing_discharge.empty:
+        discharge_merge2 = pd.merge(missing_discharge, 
+                                  mapping_table, 
+                                  how='left',
+                                  left_on=['dischargecountry'],
+                                  right_on=['country'],
+                                  suffixes=('', '_map'))
+        
+        result_df.loc[discharge_merge2.index, 'discharge_mq_region'] = discharge_merge2['mq_region'].values
+    
+    # 3. For remaining missing values, merge on region
+    missing_discharge = result_df[result_df['discharge_mq_region'].isna()].copy()
+    if not missing_discharge.empty:
+        discharge_merge3 = pd.merge(missing_discharge, 
+                                  mapping_table, 
+                                  how='left',
+                                  left_on=['dischargeregion'],
+                                  right_on=['region'],
+                                  suffixes=('', '_map'))
+        
+        result_df.loc[discharge_merge3.index, 'discharge_mq_region'] = discharge_merge3['mq_region'].values
+    
+    # Ensure original index is maintained
+    result_df.index = original_index
+    return result_df
+
+# Example usage:
+# result = map_mq_region(df, mapping_table)
+
+
+----------
+
+
+import pandas as pd
+
+def map_mq_region(df, mapping_table):
     # Create copies to avoid modifying original data
     result_df = df.copy()
     
