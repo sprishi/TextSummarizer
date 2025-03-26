@@ -1,5 +1,83 @@
 
+import pandas as pd
 
+def map_mq_region(df, mapping_table):
+    # Create copies to avoid modifying original data
+    result_df = df.copy()
+    
+    # For load mapping
+    # 1. First join on port and country
+    load_merge1 = pd.merge(result_df, 
+                          mapping_table, 
+                          how='left',
+                          left_on=['loadport', 'loadcountry'],
+                          right_on=['port', 'country'],
+                          suffixes=('', '_map'))
+    
+    # Keep only mq_region from the merge
+    result_df['load_mq_region'] = load_merge1['mq_region']
+    
+    # 2. For missing values, merge on country
+    mask = result_df['load_mq_region'].isna()
+    load_merge2 = pd.merge(result_df[mask], 
+                          mapping_table, 
+                          how='left',
+                          left_on=['loadcountry'],
+                          right_on=['country'],
+                          suffixes=('', '_map'))
+    
+    result_df.loc[mask, 'load_mq_region'] = load_merge2['mq_region']
+    
+    # 3. For remaining missing values, merge on region
+    mask = result_df['load_mq_region'].isna()
+    load_merge3 = pd.merge(result_df[mask], 
+                          mapping_table, 
+                          how='left',
+                          left_on=['loadregion'],
+                          right_on=['region'],
+                          suffixes=('', '_map'))
+    
+    result_df.loc[mask, 'load_mq_region'] = load_merge3['mq_region']
+    
+    # For discharge mapping
+    # 1. First join on port and country
+    discharge_merge1 = pd.merge(result_df, 
+                              mapping_table, 
+                              how='left',
+                              left_on=['dischargeport', 'dischargecountry'],
+                              right_on=['port', 'country'],
+                              suffixes=('', '_map'))
+    
+    result_df['discharge_mq_region'] = discharge_merge1['mq_region']
+    
+    # 2. For missing values, merge on country
+    mask = result_df['discharge_mq_region'].isna()
+    discharge_merge2 = pd.merge(result_df[mask], 
+                              mapping_table, 
+                              how='left',
+                              left_on=['dischargecountry'],
+                              right_on=['country'],
+                              suffixes=('', '_map'))
+    
+    result_df.loc[mask, 'discharge_mq_region'] = discharge_merge2['mq_region']
+    
+    # 3. For remaining missing values, merge on region
+    mask = result_df['discharge_mq_region'].isna()
+    discharge_merge3 = pd.merge(result_df[mask], 
+                              mapping_table, 
+                              how='left',
+                              left_on=['dischargeregion'],
+                              right_on=['region'],
+                              suffixes=('', '_map'))
+    
+    result_df.loc[mask, 'discharge_mq_region'] = discharge_merge3['mq_region']
+    
+    return result_df
+
+# Example usage:
+# df = your dataframe with load and discharge columns
+# mapping_table = your mapping table with port, country, region, continent, mq_region
+# result = map_mq_region(df, mapping_table)
 
 
 import streamlit as st
