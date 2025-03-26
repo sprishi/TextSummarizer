@@ -2,6 +2,89 @@
 import pandas as pd
 
 def map_mq_region(df, mapping_table):
+    # Create a copy of the input dataframe
+    result_df = df.copy()
+    
+    # 1. Create separate mappings for load
+    # Port-level mapping
+    load_port_map = pd.merge(
+        result_df[['loadport', 'loadcountry']],
+        mapping_table[['port', 'country', 'mq_region']],
+        how='left',
+        left_on=['loadport', 'loadcountry'],
+        right_on=['port', 'country']
+    )['mq_region']
+    
+    # Country-level mapping
+    load_country_map = pd.merge(
+        result_df[['loadcountry']],
+        mapping_table[['country', 'mq_region']],
+        how='left',
+        left_on=['loadcountry'],
+        right_on=['country']
+    )['mq_region']
+    
+    # Region-level mapping
+    load_region_map = pd.merge(
+        result_df[['loadregion']],
+        mapping_table[['region', 'mq_region']],
+        how='left',
+        left_on=['loadregion'],
+        right_on=['region']
+    )['mq_region']
+    
+    # 2. Create separate mappings for discharge
+    # Port-level mapping
+    discharge_port_map = pd.merge(
+        result_df[['dischargeport', 'dischargecountry']],
+        mapping_table[['port', 'country', 'mq_region']],
+        how='left',
+        left_on=['dischargeport', 'dischargecountry'],
+        right_on=['port', 'country']
+    )['mq_region']
+    
+    # Country-level mapping
+    discharge_country_map = pd.merge(
+        result_df[['dischargecountry']],
+        mapping_table[['country', 'mq_region']],
+        how='left',
+        left_on=['dischargecountry'],
+        right_on=['country']
+    )['mq_region']
+    
+    # Region-level mapping
+    discharge_region_map = pd.merge(
+        result_df[['dischargeregion']],
+        mapping_table[['region', 'mq_region']],
+        how='left',
+        left_on=['dischargeregion'],
+        right_on=['region']
+    )['mq_region']
+    
+    # 3. Combine with priority (port > country > region)
+    # Load mapping
+    result_df['load_mq_region'] = load_port_map
+    result_df['load_mq_region'] = result_df['load_mq_region'].fillna(load_country_map)
+    result_df['load_mq_region'] = result_df['load_mq_region'].fillna(load_region_map)
+    
+    # Discharge mapping
+    result_df['discharge_mq_region'] = discharge_port_map
+    result_df['discharge_mq_region'] = result_df['discharge_mq_region'].fillna(discharge_country_map)
+    result_df['discharge_mq_region'] = result_df['discharge_mq_region'].fillna(discharge_region_map)
+    
+    return result_df
+
+# Example usage:
+# result = map_mq_region(df, mapping_table)
+
+
+
+--------------
+
+
+import pandas as pd
+
+def map_mq_region(df, mapping_table):
     # Create copy with original index
     result_df = df.copy()
     original_index = result_df.index
