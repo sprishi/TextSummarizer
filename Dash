@@ -1,0 +1,494 @@
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+from datetime import datetime, timedelta
+import calendar # Needed for seasonal plot month names
+import numpy as np # Needed for duration calculation if NaNs occur
+
+# -----------------------------------------------------------------------------
+# Configuration & Constants
+# -----------------------------------------------------------------------------
+# Use wide layout for better space utilization and set the page title
+st.set_page_config(layout="wide", page_title="Refinery Outage Dashboard")
+
+APP_TITLE = "Refinery Outage Dashboard"
+DATA_FILE_PATH = "refinery_outages.csv" # Path to your data file
+
+# Define key column names for easier reference and potential changes
+DATE_COL = 'dt'
+START_DATE_COL = 'ta_start'
+END_DATE_COL = 'ta_end'
+CAPACITY_COL = 'cap_off_daily'
+MAX_CAP_COL = 'max_cap' # Define max capacity column name
+CATEGORICAL_COLS = ['region', 'sub_region', 'country', 'padd', 'state',
+                    'owner_name', 'plant', 'outage_type', 'out_cause',
+                    'internal_unit_type_group', 'unit_status']
+NUMERICAL_COLS = [MAX_CAP_COL, CAPACITY_COL]
+
+# Get the current date for filtering tables
+TODAY = datetime.now().date()
+
+# Constants for Analysis Charts
+TOP_N_CAUSES = 10 # Number of top causes/regions/etc. to show in charts
+TOP_N_OPERATORS = 10
+TOP_N_REGIONS = 10
+TOP_N_UNITS = 10
+
+# -----------------------------------------------------------------------------
+# Data Loading and Caching
+# -----------------------------------------------------------------------------
+@st.cache_data
+def load_data(file_path=DATA_FILE_PATH):
+    """
+    Loads and preprocesses the refinery outage data from a CSV file.
+    Handles potential errors during loading and date conversion.
+    Performs basic cleaning like filling missing values.
+    Adds data quality checks.
+    """
+    try:
+        df = pd.read_csv(file_path)
+    except FileNotFoundError:
+        st.error(f"Error: Data file '{file_path}' not found. "
+                 "Please ensure the file exists in the correct directory.")
+        return None, {} # Return None and empty dict for quality stats
+    except Exception as e:
+        st.error(f"An error occurred while loading the data: {e}")
+        return None, {}
+
+    data_quality_stats = {}
+    original_rows = len(df)
+    data_quality_stats['original_rows'] = original_rows
+
+    # --- Data Preprocessing ---
+    date_cols_to_convert = [DATE_COL, START_DATE_COL, END_DATE_COL, 'create_dt']
+    for col in date_cols_to_convert:
+        if col in df.columns:
+            df[col] = pd.to_datetime(df[col], errors='coerce')
+        else:
+            st.warning(f"Expected date column '{col}' not found in the data.")
+
+    for col in NUMERICAL_COLS:
+         if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+         else:
+            st.warning(f"Expected numerical column '{col}' not found. Filling with 0 if created.")
+            df[col] = 0 # Create column if missing? Or handle differently? Assume fill 0.
+
+    for col in CATEGORICAL_COLS:
+        if col in df.columns:
+            df[col] = df[col].fillna('Unknown').astype(str)
+        else:
+            st.warning(f"Expected categorical column '{col}' not found. Filling with 'Unknown'.")
+            df[col] = 'Unknown' # Create column if missing
+
+    # --- Data Quality Checks ---
+    essential_dates = [DATE_COL, START_DATE_COL, END_DATE_COL]
+    rows_before_dropna = len(df)
+    df.dropna(subset=[col for col in essential_dates if col in df.columns], inplace=True)
+    rows_dropped_na_date = rows_before_dropna - len(df)
+    data_quality_stats['rows_dropped_na_date'] = rows_dropped_na_date
+
+    # Check for illogical dates (end before start)
+    if START_DATE_COL in df.columns and END_DATE_COL in df.columns:
+        illogical_dates = df[df[END_DATE_COL] < df[START_DATE_COL]]
+        data_quality_stats['illogical_dates_count'] = len(illogical_dates)
+        # Optional: remove or flag these rows
+        # df = df[df[END_DATE_COL] >= df[START_DATE_COL]]
+
+    # Calculate duration (handle potential NaT)
+    if START_DATE_COL in df.columns and END_DATE_COL in df.columns:
+        df['duration_days'] = (df[END_DATE_COL] - df[START_DATE_COL]).dt.total_seconds() / (24 * 3600)
+        # Handle negative durations resulting from illogical dates if not removed
+        df['duration_days'] = df['duration_days'].apply(lambda x: max(x, 0) if pd.notna(x) else 0)
+        data_quality_stats['negative_duration_count'] = len(df[df['duration_days'] < 0]) # Should be 0 if max(x,0) applied
+        data_quality_stats['zero_duration_count'] = len(df[df['duration_days'] == 0])
+
+
+    data_quality_stats['final_rows'] = len(df)
+
+    return df, data_quality_stats
+
+# -----------------------------------------------------------------------------
+# Helper Functions - Plotting & Filtering (Minor modifications possible)
+# -----------------------------------------------------------------------------
+def filter_dataframe(df, filters):
+    """Applies a dictionary of filters to the dataframe."""
+    if df is None:
+        return pd.DataFrame()
+    df_filtered = df.copy()
+    for col, values in filters.items():
+        if values and col in df_filtered.columns:
+            df_filtered = df_filtered[df_filtered[col].isin(values)]
+    return df_filtered
+
+def aggregate_data(df, freq, split_col=None):
+    """Aggregates capacity data based on frequency and optional splitting."""
+    if df is None or df.empty or DATE_COL not in df.columns:
+        return pd.DataFrame({DATE_COL: [], CAPACITY_COL: [], split_col if split_col else 'dummy': []})
+    df_agg = df.set_index(DATE_COL)
+    try:
+        group_cols = []
+        if split_col and split_col != 'None' and split_col in df_agg.columns:
+            group_cols.append(split_col)
+        group_cols.append(pd.Grouper(freq=freq))
+
+        grouped = df_agg.groupby(group_cols)
+        aggregated = grouped[CAPACITY_COL].sum().reset_index()
+        return aggregated.rename(columns={DATE_COL: 'Aggregated Time'})
+    except Exception as e:
+        st.error(f"Error during data aggregation: {e}")
+        return pd.DataFrame({'Aggregated Time': [], CAPACITY_COL: [], split_col if split_col else 'dummy': []})
+
+
+def plot_time_series(df_agg, freq_text, plot_type, split_col, stack):
+    """Generates the Plotly time series chart."""
+    if df_agg is None or df_agg.empty:
+        st.warning("No data available to plot for the selected filters and aggregation.")
+        return go.Figure()
+
+    title = f'Total Capacity Offline ({freq_text} Aggregation)'
+    x_axis_col = 'Aggregated Time'
+    y_axis_col = CAPACITY_COL
+    color_col = split_col if (split_col and split_col != 'None') else None
+    plot_func = px.line
+
+    if color_col and stack:
+        plot_func = px.area
+        title += f' - Stacked by {split_col.replace("_", " ").title()}'
+    elif color_col:
+        title += f' - Split by {split_col.replace("_", " ").title()}'
+
+    if plot_type == 'Seasonal':
+        if freq_text in ['Weekly', 'Monthly']:
+            try:
+                df_agg['Year'] = df_agg[x_axis_col].dt.year.astype(str)
+                if freq_text == 'Weekly':
+                    df_agg['Period'] = df_agg[x_axis_col].dt.isocalendar().week
+                    x_axis_title = "Week of Year"
+                else: # Monthly
+                    df_agg['Period'] = df_agg[x_axis_col].dt.month
+                    df_agg['Period'] = df_agg['Period'].apply(lambda x: calendar.month_abbr[x])
+                    month_order = [calendar.month_abbr[i] for i in range(1, 13)]
+                    df_agg['Period'] = pd.Categorical(df_agg['Period'], categories=month_order, ordered=True)
+                    x_axis_title = "Month"
+
+                fig = px.line(df_agg.sort_values(by=['Year', 'Period']),
+                              x='Period', y=y_axis_col, color='Year',
+                              title=f'Seasonal Capacity Offline Trend by {x_axis_title}',
+                              labels={y_axis_col: 'Total Capacity Offline', 'Period': x_axis_title}, markers=True)
+                fig.update_layout(xaxis_title=x_axis_title, yaxis_title='Total Capacity Offline', legend_title_text='Year')
+                return fig
+            except Exception as e:
+                st.error(f"Could not generate seasonal plot: {e}")
+                plot_type = 'Historical'
+                st.warning("Falling back to Historical plot due to error in seasonal calculation.")
+        else:
+             st.warning("Seasonal plot is best viewed with Weekly or Monthly aggregation. Showing Historical plot.")
+             plot_type = 'Historical'
+
+    try:
+        fig = plot_func(df_agg, x=x_axis_col, y=y_axis_col, color=color_col, title=title,
+                        labels={y_axis_col: 'Total Capacity Offline', x_axis_col: f'Time ({freq_text})', color_col: color_col.replace("_", " ").title() if color_col else ''},
+                        line_group=color_col if plot_func == px.area and not stack else None)
+        fig.update_layout(xaxis_title=f'Time ({freq_text})', yaxis_title='Total Capacity Offline', hovermode="x unified")
+        return fig
+    except Exception as e:
+        st.error(f"Could not generate historical plot: {e}")
+        return go.Figure()
+
+# -----------------------------------------------------------------------------
+# Helper Functions - Analysis Charts
+# -----------------------------------------------------------------------------
+def plot_top_n_bar(df, group_col, value_col, top_n, title, sort_ascending=False):
+    """Helper to create a sorted bar chart for top N categories."""
+    if df is None or df.empty or group_col not in df.columns or value_col not in df.columns:
+        st.info(f"Not enough data or missing columns ('{group_col}', '{value_col}') for '{title}'.")
+        return go.Figure()
+    try:
+        agg_data = df.groupby(group_col)[value_col].sum().reset_index()
+        top_data = agg_data.sort_values(by=value_col, ascending=sort_ascending).head(top_n)
+        fig = px.bar(top_data, x=group_col, y=value_col, title=title,
+                     labels={group_col: group_col.replace("_", " ").title(), value_col: value_col.replace("_", " ").title()})
+        fig.update_layout(xaxis={'categoryorder':'total descending'}) # Ensure correct order
+        return fig
+    except Exception as e:
+        st.error(f"Error creating plot '{title}': {e}")
+        return go.Figure()
+
+def plot_pie_chart(df, group_col, value_col, title):
+    """Helper to create a pie chart."""
+    if df is None or df.empty or group_col not in df.columns or value_col not in df.columns:
+        st.info(f"Not enough data or missing columns ('{group_col}', '{value_col}') for '{title}'.")
+        return go.Figure()
+    try:
+        agg_data = df.groupby(group_col)[value_col].sum().reset_index()
+        fig = px.pie(agg_data, names=group_col, values=value_col, title=title,
+                     labels={group_col: group_col.replace("_", " ").title(), value_col: value_col.replace("_", " ").title()})
+        fig.update_traces(textposition='inside', textinfo='percent+label')
+        return fig
+    except Exception as e:
+        st.error(f"Error creating plot '{title}': {e}")
+        return go.Figure()
+
+def plot_duration_histogram(df, duration_col, title):
+    """Helper to create a histogram of durations."""
+    if df is None or df.empty or duration_col not in df.columns:
+        st.info(f"Not enough data or missing column ('{duration_col}') for '{title}'.")
+        return go.Figure()
+    try:
+        # Filter out potentially invalid durations if needed (e.g., only show > 0)
+        plot_data = df[df[duration_col] > 0]
+        if plot_data.empty:
+             st.info(f"No valid durations (>0) found for '{title}'.")
+             return go.Figure()
+        fig = px.histogram(plot_data, x=duration_col, title=title, nbins=50, # Adjust nbins as needed
+                           labels={duration_col: "Duration (Days)"})
+        return fig
+    except Exception as e:
+        st.error(f"Error creating plot '{title}': {e}")
+        return go.Figure()
+
+# -----------------------------------------------------------------------------
+# Main Application Flow
+# -----------------------------------------------------------------------------
+st.title(APP_TITLE)
+st.markdown(f"Analyzes refinery outage data. Current date used for filtering: **{TODAY.strftime('%Y-%m-%d')}**")
+
+# --- Load Data ---
+df_raw, dq_stats = load_data()
+
+# Stop execution if data loading failed
+if df_raw is None:
+    st.stop()
+
+# --- Data Quality Summary ---
+with st.expander("Data Quality Summary", expanded=False):
+    st.metric("Original Rows Loaded", dq_stats.get('original_rows', 'N/A'))
+    st.metric("Rows Dropped (Missing Dates)", dq_stats.get('rows_dropped_na_date', 'N/A'))
+    if 'illogical_dates_count' in dq_stats and dq_stats['illogical_dates_count'] > 0:
+        st.warning(f"Found {dq_stats['illogical_dates_count']} rows with End Date before Start Date.")
+    if 'zero_duration_count' in dq_stats and dq_stats['zero_duration_count'] > 0:
+        st.warning(f"Found {dq_stats['zero_duration_count']} rows with zero duration.")
+    st.metric("Final Rows Used", dq_stats.get('final_rows', 'N/A'))
+
+
+# --- Filters Section ---
+st.header("Filters for Time Series Plot & Analysis")
+st.markdown("Select filters below to update the time series plot and the analysis charts in the tabs below.")
+
+cols_per_row = 3
+num_filters = len([col for col in CATEGORICAL_COLS if col in df_raw.columns])
+num_rows = (num_filters + cols_per_row - 1) // cols_per_row
+
+filters = {}
+filter_cols_ui = [st.columns(cols_per_row) for _ in range(num_rows)]
+flat_cols_ui = [col for row in filter_cols_ui for col in row]
+
+filter_idx = 0
+for data_col in CATEGORICAL_COLS:
+    if data_col in df_raw.columns:
+        if filter_idx < len(flat_cols_ui):
+            with flat_cols_ui[filter_idx]:
+                try:
+                    options = sorted(df_raw[data_col].astype(str).unique())
+                    label = f"Select {data_col.replace('_', ' ').title()}"
+                    filters[data_col] = st.multiselect(label, options, key=f"filter_{data_col}")
+                except Exception as e:
+                    st.error(f"Error creating filter for {data_col}: {e}")
+            filter_idx += 1
+        else:
+            st.warning(f"Ran out of UI columns for filter: {data_col}")
+
+
+# Apply filters to get data specifically for the plot AND analysis tabs
+df_plot_filtered = filter_dataframe(df_raw, filters)
+
+# --- Time Series Plot Section ---
+st.header("Capacity Offline Over Time")
+plot_controls_cols = st.columns(4)
+# (Plot controls remain the same as before)
+with plot_controls_cols[0]:
+    agg_level = st.selectbox("Aggregation Level", options=['Daily', 'Weekly', 'Monthly', 'Yearly'], index=0, key="agg_level")
+    freq_map = {'Daily': 'D', 'Weekly': 'W-MON', 'Monthly': 'MS', 'Yearly': 'AS'}
+    agg_freq = freq_map[agg_level]
+with plot_controls_cols[1]:
+    plot_type_option = st.selectbox("Plot View", options=['Historical', 'Seasonal'], index=0, key="plot_view", help="Seasonal view works best with Weekly or Monthly aggregation.")
+with plot_controls_cols[2]:
+    split_limit = 50
+    split_options = ['None'] + [col for col in CATEGORICAL_COLS if col in df_plot_filtered.columns and df_plot_filtered[col].nunique() < split_limit]
+    split_by = st.selectbox("Split By Category", options=split_options, index=0, key="split_by", help=f"Split the plot lines by a category (max {split_limit} unique values).")
+with plot_controls_cols[3]:
+    is_split = (split_by != 'None')
+    stack_plot = st.checkbox("Stack Areas", value=False, disabled=(not is_split), key="stack_plot", help="Stack areas when splitting by category (uses area plot).")
+
+# Aggregate data based on selections
+df_aggregated = aggregate_data(df_plot_filtered, agg_freq, split_by)
+
+# Create and display the plot
+if df_aggregated is not None and not df_aggregated.empty:
+    fig_ts = plot_time_series(df_aggregated, agg_level, plot_type_option, split_by, stack_plot)
+    st.plotly_chart(fig_ts, use_container_width=True)
+elif df_aggregated is not None:
+    st.info("No data matches the selected filters for the time series plot.")
+
+# --- Outage Tables Section ---
+st.header("Outage Details")
+st.markdown("View current and upcoming outages. Use the date filters to narrow down the tables.")
+
+# Date range filter for tables
+try:
+    min_data_date = df_raw[START_DATE_COL].min().date()
+    max_data_date = df_raw[END_DATE_COL].max().date()
+except Exception:
+    min_data_date = TODAY - timedelta(days=365)
+    max_data_date = TODAY + timedelta(days=365)
+
+table_filter_cols = st.columns(2)
+with table_filter_cols[0]:
+    table_start_date = st.date_input("Filter Tables From Start Date", value=None, min_value=min_data_date, max_value=max_data_date, key="table_start_date", help="Show outages starting on or after this date.")
+with table_filter_cols[1]:
+    table_end_date = st.date_input("Filter Tables To End Date", value=None, min_value=min_data_date, max_value=max_data_date, key="table_end_date", help="Show outages ending on or before this date.")
+
+# Apply Table Filters
+df_table_base = df_raw.copy()
+if table_start_date and table_end_date and table_start_date > table_end_date:
+    st.warning("Table filter 'From Date' is after 'To Date'. Adjust the dates.")
+    df_table_filtered = pd.DataFrame(columns=df_raw.columns)
+else:
+    effective_table_start = table_start_date if table_start_date else min_data_date
+    effective_table_end = table_end_date if table_end_date else max_data_date
+    df_table_filtered = df_table_base[
+        (df_table_base[START_DATE_COL].dt.date <= effective_table_end) &
+        (df_table_base[END_DATE_COL].dt.date >= effective_table_start)
+    ]
+
+# --- Current Outages ---
+st.subheader("Current Outages")
+st.markdown(f"Displaying outages active as of **{TODAY.strftime('%Y-%m-%d')}** and within the selected date filter range.")
+current_outages = df_table_filtered[
+    (df_table_filtered[START_DATE_COL].dt.date <= TODAY) &
+    (df_table_filtered[END_DATE_COL].dt.date >= TODAY)
+]
+if not current_outages.empty:
+    display_cols_current = [START_DATE_COL, END_DATE_COL, 'region', 'plant', 'internal_unit_type_group', 'outage_type', 'out_cause', CAPACITY_COL, MAX_CAP_COL, 'unit_status', 'duration_days']
+    display_cols_current_safe = [col for col in display_cols_current if col in current_outages.columns]
+    st.dataframe(current_outages[display_cols_current_safe].sort_values(by=START_DATE_COL), use_container_width=True)
+else:
+    st.info("No current outages match the date filter criteria.")
+
+# --- Future Outages ---
+st.subheader("Future Outages")
+st.markdown(f"Displaying planned outages starting after **{TODAY.strftime('%Y-%m-%d')}** and within the selected date filter range.")
+future_outages = df_table_filtered[
+    df_table_filtered[START_DATE_COL].dt.date > TODAY
+]
+if not future_outages.empty:
+    display_cols_future = [START_DATE_COL, END_DATE_COL, 'region', 'plant', 'internal_unit_type_group', 'outage_type', 'out_cause', CAPACITY_COL, MAX_CAP_COL, 'unit_status', 'duration_days']
+    display_cols_future_safe = [col for col in display_cols_future if col in future_outages.columns]
+    st.dataframe(future_outages[display_cols_future_safe].sort_values(by=START_DATE_COL), use_container_width=True)
+else:
+    st.info("No future outages match the date filter criteria.")
+
+# --- KPI Section ---
+st.header("Key Performance Indicators (KPIs)")
+st.markdown("Metrics calculated based on the **filtered tables** above.")
+
+kpi_cols = st.columns(4)
+# Calculate KPIs safely, handling empty dataframes
+current_cap_offline = current_outages[CAPACITY_COL].sum() if not current_outages.empty else 0
+num_current_outages = len(current_outages)
+future_cap_offline = future_outages[CAPACITY_COL].sum() if not future_outages.empty else 0
+num_future_outages = len(future_outages)
+
+# Display KPIs using st.metric
+with kpi_cols[0]:
+    st.metric("Current Capacity Offline", f"{current_cap_offline:,.0f}")
+with kpi_cols[1]:
+    st.metric("Number of Active Outages", f"{num_current_outages}")
+with kpi_cols[2]:
+    st.metric("Future Capacity Scheduled Offline", f"{future_cap_offline:,.0f}")
+with kpi_cols[3]:
+    st.metric("Number of Future Outages", f"{num_future_outages}")
+
+
+# --- Analysis Tabs Section ---
+st.header("Detailed Analysis")
+st.markdown("Explore outage characteristics based on the **filters selected above the time series plot**.")
+
+tab_titles = [
+    "Cause Analysis",
+    "Type Analysis",
+    "Regional Impact",
+    "Operator Impact",
+    "Unit Impact",
+    "Duration Analysis"
+]
+tabs = st.tabs(tab_titles)
+
+# Use the df_plot_filtered dataframe for these analyses
+analysis_df = df_plot_filtered
+
+with tabs[0]: # Cause Analysis
+    st.subheader(f"Top {TOP_N_CAUSES} Outage Causes by Impact")
+    fig_cause = plot_top_n_bar(analysis_df, 'out_cause', CAPACITY_COL, TOP_N_CAUSES,
+                               f"Top {TOP_N_CAUSES} Causes by Total Capacity Offline")
+    st.plotly_chart(fig_cause, use_container_width=True)
+
+with tabs[1]: # Type Analysis
+    st.subheader("Outage Type Breakdown")
+    # Use two columns for side-by-side pie charts
+    type_cols = st.columns(2)
+    with type_cols[0]:
+        fig_type_cap = plot_pie_chart(analysis_df, 'outage_type', CAPACITY_COL,
+                                      "Breakdown by Capacity Offline")
+        st.plotly_chart(fig_type_cap, use_container_width=True)
+    with type_cols[1]:
+        # Need to count occurrences for the second pie chart
+        type_counts = analysis_df['outage_type'].value_counts().reset_index()
+        type_counts.columns = ['outage_type', 'count']
+        fig_type_count = px.pie(type_counts, names='outage_type', values='count',
+                                title="Breakdown by Number of Outages")
+        fig_type_count.update_traces(textposition='inside', textinfo='percent+label')
+        st.plotly_chart(fig_type_count, use_container_width=True)
+
+
+with tabs[2]: # Regional Impact
+    st.subheader(f"Top {TOP_N_REGIONS} Regions by Impact")
+    fig_region = plot_top_n_bar(analysis_df, 'region', CAPACITY_COL, TOP_N_REGIONS,
+                                f"Top {TOP_N_REGIONS} Regions by Total Capacity Offline")
+    st.plotly_chart(fig_region, use_container_width=True)
+    # Could add PADD analysis here too if desired
+
+with tabs[3]: # Operator Impact
+    st.subheader(f"Top {TOP_N_OPERATORS} Operators by Impact")
+    st.caption("Note: This shows absolute impact. Operator size varies significantly.")
+    fig_operator = plot_top_n_bar(analysis_df, 'owner_name', CAPACITY_COL, TOP_N_OPERATORS,
+                                  f"Top {TOP_N_OPERATORS} Operators by Total Capacity Offline")
+    st.plotly_chart(fig_operator, use_container_width=True)
+
+with tabs[4]: # Unit Impact
+    st.subheader(f"Top {TOP_N_UNITS} Unit Types by Impact")
+    fig_unit = plot_top_n_bar(analysis_df, 'internal_unit_type_group', CAPACITY_COL, TOP_N_UNITS,
+                              f"Top {TOP_N_UNITS} Unit Types by Total Capacity Offline")
+    st.plotly_chart(fig_unit, use_container_width=True)
+
+with tabs[5]: # Duration Analysis
+    st.subheader("Outage Duration Distribution")
+    fig_duration = plot_duration_histogram(analysis_df, 'duration_days',
+                                           "Distribution of Outage Durations (in Days)")
+    st.plotly_chart(fig_duration, use_container_width=True)
+    # Optional: Add box plot comparing duration by outage_type
+    if not analysis_df.empty and 'duration_days' in analysis_df.columns and 'outage_type' in analysis_df.columns:
+         try:
+             fig_dur_box = px.box(analysis_df[analysis_df['duration_days'] > 0], x='outage_type', y='duration_days',
+                                  title="Duration Distribution by Outage Type",
+                                  labels={'outage_type': 'Outage Type', 'duration_days': 'Duration (Days)'})
+             st.plotly_chart(fig_dur_box, use_container_width=True)
+         except Exception as e:
+             st.warning(f"Could not generate duration box plot: {e}")
+
+
+# --- Footer or final notes ---
+st.markdown("---")
+st.caption("Refinery Outage Dashboard | Data assumed to be in refinery_outages.csv")
