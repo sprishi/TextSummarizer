@@ -1,3 +1,104 @@
+
+import streamlit as st
+import pydeck as pdk
+import geopandas as gpd
+import pandas as pd
+from shapely.geometry import mapping
+
+# Assuming your vessel dataframe is called 'vessel_df' with columns: 
+# 'latitude', 'longitude', 'status' (laden/ballast), 'imo'
+# and IHO regions dataframe is 'iho_gpd' with 'NAME' and 'geometry'
+
+def create_vessel_layer(vessel_df):
+    # Create vessel layer with different colors for laden/ballast
+    vessel_layer = pdk.Layer(
+        "ScatterplotLayer",
+        data=vessel_df,
+        get_position=["longitude", "latitude"],
+        get_radius=120,
+        radius_scale=120,
+        get_fill_color="status == 'laden' ? [0, 0, 255, 140] : [255, 0, 0, 140]",  # Blue for laden, Red for ballast
+        pickable=True,
+        auto_highlight=True
+    )
+    return vessel_layer
+
+def create_sea_regions_layer(iho_gpd):
+    # Convert GeoPandas geometry to GeoJSON-like format for PyDeck
+    geojson_data = []
+    for idx, row in iho_gpd.iterrows():
+        geojson_data.append({
+            "name": row["NAME"],
+            "geometry": mapping(row["geometry"])
+        })
+
+    # Create sea regions layer
+    sea_layer = pdk.Layer(
+        "GeoJsonLayer",
+        data=geojson_data,
+        opacity=0.3,
+        stroked=True,
+        filled=True,
+        extruded=False,
+        wireframe=True,
+        get_fill_color=[200, 200, 200, 100],  # Light gray fill
+        get_line_color=[100, 100, 100, 255],  # Darker gray outline
+        pickable=True
+    )
+    return sea_layer
+
+def create_deck(vessel_df, iho_gpd):
+    # Initial view state
+    VIEW_STATE = pdk.ViewState(
+        latitude=0,
+        longitude=0,
+        zoom=1,
+        pitch=0
+    )
+
+    # Create both layers
+    vessel_layer = create_vessel_layer(vessel_df)
+    sea_layer = create_sea_regions_layer(iho_gpd)
+
+    # Create tooltip
+    tooltip = {
+        "html": "<b>IMO:</b> {imo}<br><b>Region:</b> {name}",
+        "style": {
+            "backgroundColor": "steelblue",
+            "color": "white"
+        }
+    }
+
+    # Combine layers in deck
+    deck = pdk.Deck(
+        layers=[sea_layer, vessel_layer],
+        initial_view_state=VIEW_STATE,
+        tooltip=tooltip,
+        map_style="mapbox://styles/mapbox/light-v9"
+    )
+    
+    return deck
+
+def main():
+    # Your dataframes (replace with your actual data loading)
+    # vessel_df = pd.read_csv("vessels.csv")  
+    # iho_gpd = gpd.read_file("iho_regions.shp")
+
+    # Create and display the deck
+    deck = create_deck(vessel_df, iho_gpd)
+    st.pydeck_chart(deck)
+
+    # Optional: Display vessel list
+    st.write("Vessel List")
+    st.dataframe(vessel_df)
+
+if __name__ == "__main__":
+    main()
+
+
+
+------
+
 import streamlit as st
 import pandas as pd
 import plotly.express as px
