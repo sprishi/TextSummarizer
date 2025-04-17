@@ -1,3 +1,190 @@
+import pandas as pd
+
+# Load historical data (df_historical)
+# Ensure 'Date (origin)' is datetime
+df_historical['Date (origin)'] = pd.to_datetime(df_historical['Date (origin)'])
+
+# Filter data to 2023-2025 and relevant criteria
+df = df_historical[
+    (df_historical['Date (origin)'] >= '2023-01-01') &
+    (df_historical['Date (origin)'] <= '2025-03-31') &
+    (df_historical['TradingRegion Origin'] == 'US Gulf Coast') &
+    (df_historical['Continent Destination'].isin(['Asia', 'Europe'])) &
+    (df_historical['Vessel type'].isin(['Aframax', 'Suezmax', 'VLCC']))
+]
+
+# Add Year and Month columns
+df['Year'] = df['Date (origin)'].dt.year
+df['Month'] = df['Date (origin)'].dt.month
+
+# Define recency weights (adjustable)
+weights = {2023: 0.2, 2024: 0.4, 2025: 0.4}
+df['Weight'] = df['Year'].map(weights)
+df['Weighted_Volume'] = df['Volume (bbl)'] * df['Weight']
+
+# Calculate Decade (1/2/3) based on day of month
+df['Decade'] = df['Date (origin)'].apply(lambda x: 1 if x.day <= 10 else 2 if x.day <= 20 else 3)
+
+# Group by Quality/Destination/Month/Decade and sum weighted volumes
+decade_group = df.groupby([
+    'Quality', 'Continent Destination', 'Month', 'Decade'
+])['Weighted_Volume'].sum().reset_index()
+
+# Calculate % of total per group
+decade_group['Total'] = decade_group.groupby([
+    'Quality', 'Continent Destination', 'Month'
+])['Weighted_Volume'].transform('sum')
+
+decade_group['Decade_Pct'] = (decade_group['Weighted_Volume'] / decade_group['Total']) * 100
+
+# Pivot to wide format
+decade_allocation = decade_group.pivot_table(
+    index=['Quality', 'Continent Destination', 'Month'],
+    columns='Decade',
+    values='Decade_Pct',
+    fill_value=0
+).reset_index().rename(columns={1: 'Decade1%', 2: 'Decade2%', 3: 'Decade3%'})
+
+
+# Group by Quality/Destination/Month/Vessel type and sum weighted volumes
+vessel_group = df.groupby([
+    'Quality', 'Continent Destination', 'Month', 'Vessel type'
+])['Weighted_Volume'].sum().reset_index()
+
+# Calculate % of total per group
+vessel_group['Total'] = vessel_group.groupby([
+    'Quality', 'Continent Destination', 'Month'
+])['Weighted_Volume'].transform('sum')
+
+vessel_group['Vessel_Pct'] = (vessel_group['Weighted_Volume'] / vessel_group['Total']) * 100
+
+# Pivot to wide format
+vessel_allocation = vessel_group.pivot_table(
+    index=['Quality', 'Continent Destination', 'Month'],
+    columns='Vessel type',
+    values='Vessel_Pct',
+    fill_value=0
+).reset_index()
+
+#____________
+
+import pandas as pd
+import numpy as np
+
+# ── 0) ASSUMPTIONS ─────────────────────────────────────────────────────────────
+# - You already have a DataFrame `df` with:
+#     Date         (datetime64)
+#     Quality      (str: "Light"/"Medium"/"Heavy")
+#     Destination  (str: "Asia"/"Europe")
+#     VesselType   (str: "Aframax"/"Suezmax"/"VLCC")
+#     Volume_bbl   (float)
+#
+# - Your df is already filtered to PADD3 → {Asia, Europe} → Aframax/Suezmax/VLCC
+# ────────────────────────────────────────────────────────────────────────────────
+
+# 1) PREPROCESS: add Year, Month, Decade
+df = df.copy()
+df['Year']  = df['Date'].dt.year
+df['Month'] = df['Date'].dt.month_name().str.slice(0,3)   # "Jan","Feb",…
+df['Dom']   = df['Date'].dt.day
+df['Decade'] = pd.cut(df['Dom'],
+                     bins=[0,10,20,31],
+                     labels=['Decade1','Decade2','Decade3'])
+
+# 2) MONTHLY TOTALS (denominator for both splits)
+month_tot = (
+    df
+    .groupby(['Quality','Destination','Year','Month'])['Volume_bbl']
+    .sum()
+    .rename('MonthVol')
+    .reset_index()
+)
+
+# 3) DECADALE TOTALS & PROPS
+dec = (
+    df
+    .groupby(['Quality','Destination','Year','Month','Decade'])['Volume_bbl']
+    .sum()
+    .rename('DecVol')
+    .reset_index()
+    .merge(month_tot, on=['Quality','Destination','Year','Month'])
+)
+dec['Prop'] = dec['DecVol'] / dec['MonthVol']
+
+
+# 4) VESSEL‑CLASS TOTALS & PROPS
+vt = (
+    df
+    .groupby(['Quality','Destination','Year','Month','VesselType'])['Volume_bbl']
+    .sum()
+    .rename('VesVol')
+    .reset_index()
+    .merge(month_tot, on=['Quality','Destination','Year','Month'])
+)
+vt['Prop'] = vt['VesVol'] / vt['MonthVol']
+
+
+# ── SCENARIO A: SIMPLE (unweighted) AVERAGE ────────────────────────────────────
+
+#  A.1) Month→Decade weights
+decade_lookup_simple = (
+    dec
+    .groupby(['Quality','Destination','Month','Decade'])['Prop']
+    .mean()
+    .reset_index(name='Weight')
+)
+
+#  A.2) Month→VesselType weights
+vessel_lookup_simple = (
+    vt
+    .groupby(['Quality','Destination','Month','VesselType'])['Prop']
+    .mean()
+    .reset_index(name='Weight')
+)
+
+
+# ── SCENARIO B: RECENCY‑WEIGHTED AVERAGE ───────────────────────────────────────
+
+# Define your per‑year weight (e.g. 2023→1, 2024→2, 2025→3)
+weights = {2023: 1, 2024: 2, 2025: 3}
+
+def weighted_avg(group):
+    w = group['Year'].map(weights)
+    return (group['Prop'] * w).sum() / w.sum()
+
+#  B.1) Month→Decade recency‑weighted weights
+decade_lookup_weighted = (
+    dec
+    .groupby(['Quality','Destination','Month','Decade'])
+    .apply(weighted_avg)
+    .reset_index(name='Weight')
+)
+
+#  B.2) Month→VesselType recency‑weighted weights
+vessel_lookup_weighted = (
+    vt
+    .groupby(['Quality','Destination','Month','VesselType'])
+    .apply(weighted_avg)
+    .reset_index(name='Weight')
+)
+
+
+# ── SAVE OR INSPECT ───────────────────────────────────────────────────────────
+
+decade_lookup_simple.to_csv('decade_weights_simple.csv', index=False)
+vessel_lookup_simple.to_csv('vessel_weights_simple.csv', index=False)
+
+decade_lookup_weighted.to_csv('decade_weights_weighted.csv', index=False)
+vessel_lookup_weighted.to_csv('vessel_weights_weighted.csv', index=False)
+
+# Print to check
+print("Simple decade weights:\n", decade_lookup_simple.head(), "\n")
+print("Weighted decade weights:\n", decade_lookup_weighted.head(), "\n")
+print("Simple vessel weights:\n", vessel_lookup_simple.head(), "\n")
+print("Weighted vessel weights:\n", vessel_lookup_weighted.head())
+
+
+#-----
 
 import pandas as pd
 
