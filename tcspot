@@ -1,0 +1,109 @@
+import pandas as pd
+
+def classify_charters(df: pd.DataFrame, imo_col: str, charterer_col: str, date_col: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Classifies voyages as 'Spot' or 'Time Charter' and determines overall IMO status.
+
+    Args:
+        df (pd.DataFrame): Input DataFrame with voyage data.
+                           Must contain IMO, Charterer, and a voyage date column.
+        imo_col (str): Name of the IMO column.
+        charterer_col (str): Name of the Charterer column.
+        date_col (str): Name of the voyage date column (e.g., LoadDate).
+
+    Returns:
+        tuple[pd.DataFrame, pd.DataFrame]:
+            - DataFrame with an added 'CharterType' column for each voyage.
+            - DataFrame with 'IMO_Status' (overall Spot/TC) for each IMO.
+    """
+    if not {imo_col, charterer_col, date_col}.issubset(df.columns):
+        raise ValueError(f"Ensure columns '{imo_col}', '{charterer_col}', and '{date_col}' are in the DataFrame.")
+
+    # Work on a copy to avoid modifying the original DataFrame
+    processed_df = df.copy()
+
+    # Ensure the date column is in datetime format
+    processed_df[date_col] = pd.to_datetime(processed_df[date_col])
+
+    # Sort data by IMO and then by VoyageDate
+    processed_df.sort_values(by=[imo_col, date_col], ascending=[True, True], inplace=True)
+
+    # --- Identify Charter Blocks and Classify Voyages ---
+    # This list will store the charter type for each row
+    charter_types = []
+
+    # Group by IMO and process each vessel's voyages
+    for imo, group in processed_df.groupby(imo_col, sort=False):
+        if group.empty:
+            continue
+
+        # Identify changes in charterer to define blocks
+        # True if current charterer is different from the previous one (for this IMO)
+        group['is_new_charterer_block'] = group[charterer_col] != group[charterer_col].shift(1)
+        
+        # Create a unique ID for each block of consecutive voyages with the same charterer
+        group['block_id'] = group['is_new_charterer_block'].cumsum()
+
+        # Count voyages within each block (for this IMO)
+        group['voyages_in_block'] = group.groupby('block_id')[date_col].transform('size')
+
+        # Apply the rule: >= 2 voyages in a block for TC, else Spot
+        group['CharterType'] = 'Spot'  # Default to Spot
+        group.loc[group['voyages_in_block'] >= 2, 'CharterType'] = 'Time Charter'
+        
+        charter_types.extend(group['CharterType'].tolist())
+
+    # Add the 'CharterType' column to the main DataFrame
+    # Ensure the order is preserved if original index was important (sorting might have changed it)
+    # However, since we are processing group by group and extending, the order should correspond to the sorted df.
+    processed_df['CharterType'] = charter_types
+    
+    # Clean up temporary columns if not needed in the final voyage-level output
+    # processed_df.drop(columns=['is_new_charterer_block', 'block_id', 'voyages_in_block'], inplace=True, errors='ignore')
+
+
+    # --- Determine Overall Vessel Status (per IMO) ---
+    # Calculate the mode of CharterType for each IMO
+    # If there's a tie in mode (e.g., equal number of Spot and TC voyages), mode() returns all of them.
+    # We pick the first one. You might want a different tie-breaking rule.
+    imo_status_summary = processed_df.groupby(imo_col)['CharterType'].apply(
+        lambda x: x.mode()[0] if not x.mode().empty else 'Unknown'
+    ).reset_index()
+    imo_status_summary.rename(columns={'CharterType': 'IMO_Status'}, inplace=True)
+
+    return processed_df, imo_status_summary
+
+# --- Example Usage (assuming your data is in a DataFrame called 'tanker_flow_data') ---
+# Make sure to replace with your actual column names.
+# This example creates a dummy DataFrame.
+
+# Sample Data (replace with your actual data loading)
+data = {
+    'IMO_Column': ['IMO1', 'IMO1', 'IMO1', 'IMO1', 'IMO1', 'IMO1', 'IMO1', 'IMO2', 'IMO2', 'IMO3', 'IMO3'],
+    'Charterer_Column': ['C1', 'C2', 'C2', 'C1', 'C3', 'C3', 'C3', 'C4', 'C5', 'C6', 'C6'],
+    'VoyageDate_Column': pd.to_datetime([
+        '2022-01-01', '2022-02-01', '2022-03-01', '2022-04-01', 
+        '2022-05-01', '2022-06-01', '2022-07-01', '2022-01-15', 
+        '2022-02-15', '2023-01-01', '2023-02-01'
+    ]),
+    'OtherData': [1,2,3,4,5,6,7,8,9,10,11] # Example of other columns
+}
+tanker_flow_data = pd.DataFrame(data)
+
+# Filter data from 2022 onwards (user mentioned this is already done)
+# For the example, all data is from 2022 onwards.
+# tanker_flow_data = tanker_flow_data[tanker_flow_data['VoyageDate_Column'] >= '2022-01-01']
+
+
+# Apply the classification
+# voyages_with_charter_type_df, imo_overall_status_df = classify_charters(
+#     tanker_flow_data,
+#     imo_col='IMO_Column',
+#     charterer_col='Charterer_Column',
+#     date_col='VoyageDate_Column'
+# )
+
+# print("--- Voyages with CharterType ---")
+# print(voyages_with_charter_type_df)
+# print("\n--- Overall IMO Status ---")
+# print(imo_overall_status_df)
