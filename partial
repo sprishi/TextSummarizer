@@ -1,46 +1,53 @@
-def classify_partial_journeys(mo_whole):
-    df = mo_whole.copy()
+def classify_partial_journeys(df):
+    df = df.copy()
+    df['departuredate'] = pd.to_datetime(df['departuredate'])
+    df['arrivaldate'] = pd.to_datetime(df['arrivaldate'])
 
-    # Step 1: sort for consistency
-    df = df.sort_values(by=['imo', 'departuredate', 'arrivaldate'])
+    df['partial_journey'] = 'no'
+    df['partial'] = 'no'
 
-    # Group by IMO
     results = []
+
     for imo, group in df.groupby('imo'):
-        temp = group.copy()
+        g = group.sort_values(by=['departuredate', 'arrivaldate']).reset_index()
+        g['tag'] = 'no'
 
-        # Find duplicates
-        dep_counts = temp['departuredate'].value_counts()
-        arr_counts = temp['arrivaldate'].value_counts()
+        # Check for overlapping discharge (same dep, different arr)
+        for dep in g['departuredate'].unique():
+            same_dep = g[g['departuredate'] == dep]
+            if len(same_dep['arrivaldate'].unique()) > 1:
+                g.loc[same_dep.index, 'tag'] = 'discharge'
 
-        dep_map = temp['departuredate'].map(dep_counts)
-        arr_map = temp['arrivaldate'].map(arr_counts)
+        # Check for overlapping load (same arr, different dep)
+        for arr in g['arrivaldate'].unique():
+            same_arr = g[g['arrivaldate'] == arr]
+            if len(same_arr['departuredate'].unique()) > 1:
+                g.loc[same_arr.index, 'tag'] = 'load'
 
-        temp['partial_journey'] = 'no'
+        # Now find overlaps of both load and discharge
+        overlaps = []
+        for i in range(len(g)):
+            row = g.loc[i]
+            others = g[(g.index != i)]
+            cond = (
+                (others['departuredate'] <= row['arrivaldate']) &
+                (others['arrivaldate'] >= row['departuredate'])
+            )
+            if (others[cond]['tag'].nunique() > 1):
+                overlaps.append(i)
 
-        # Tag load & discharge
-        temp.loc[(dep_map > 1) & (arr_map == 1), 'partial_journey'] = 'load'
-        temp.loc[(arr_map > 1) & (dep_map == 1), 'partial_journey'] = 'discharge'
+        g.loc[overlaps, 'tag'] = 'both'
+        g['partial_journey'] = g['tag']
+        g.drop(columns='tag', inplace=True)
 
-        # Tag both where overlaps happen
-        load_discharge = temp[temp['partial_journey'].isin(['load', 'discharge'])]
-        for i, row in load_discharge.iterrows():
-            overlaps = load_discharge[
-                (load_discharge['departuredate'] <= row['arrivaldate']) &
-                (load_discharge['arrivaldate'] >= row['departuredate'])
-            ]
-            if len(overlaps) > 1:
-                temp.loc[overlaps.index, 'partial_journey'] = 'both'
-
-        # Create 'partial' column
-        temp['partial'] = 'no'
+        # Assign 'partial' flag
         for val in ['load', 'discharge', 'both']:
-            part_rows = temp[temp['partial_journey'] == val]
-            if not part_rows.empty:
-                temp.loc[part_rows.index[0], 'partial'] = 'yes'
-                temp.loc[part_rows.index[1:], 'partial'] = 'dup'
+            rows = g[g['partial_journey'] == val]
+            if not rows.empty:
+                g.loc[rows.index[0], 'partial'] = 'yes'
+                g.loc[rows.index[1:], 'partial'] = 'dup'
 
-        results.append(temp)
+        results.append(g.set_index('index'))
 
     final_df = pd.concat(results).sort_index()
     return final_df
