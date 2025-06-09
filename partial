@@ -1,72 +1,64 @@
-def analyze_vessel_journeys(mo_whole: pd.DataFrame) -> pd.DataFrame:
+import networkx as nx
+
+def group_overlapping_journeys(mo_whole: pd.DataFrame) -> pd.DataFrame:
     """
-    Analyzes vessel journey data to identify partial loads, discharges, and both.
+    Groups overlapping journeys for each vessel (IMO).
+
+    This function identifies all journeys that overlap in time for each IMO
+    and assigns a unique 'journey_group' identifier to each cluster of
+    overlapping journeys.
 
     Args:
-        mo_whole: DataFrame with vessel flow data, including columns like
-                  'imo', 'departuredate', and 'arrivaldate'.
+        mo_whole: DataFrame with vessel flow data, including 'imo',
+                  'departuredate', and 'arrivaldate'.
 
     Returns:
-        A new DataFrame with 'partial_journey' and 'partial' columns.
+        A new DataFrame with an added 'journey_group' column.
     """
-    # Ensure date columns are in datetime format
+    # Ensure date columns are in datetime format and create a copy
     df = mo_whole.copy()
     df['departuredate'] = pd.to_datetime(df['departuredate'])
     df['arrivaldate'] = pd.to_datetime(df['arrivaldate'])
 
-    # Sort by IMO and dates
-    df = df.sort_values(['imo', 'departuredate', 'arrivaldate']).reset_index(drop=True)
+    # Sort for clarity, although not strictly necessary for this logic
+    df = df.sort_values(['imo', 'departuredate']).reset_index(drop=True)
 
-    # Initialize new columns
-    df['partial_journey'] = 'no'
-    df['partial'] = 'no'
+    # Initialize the new column
+    df['journey_group'] = None
 
-    # Group by IMO to process each vessel's journeys
+    # Process each vessel's journeys
     for imo, group in df.groupby('imo'):
-        # Identify partial loads and discharges within the group
-        is_load = group.duplicated(subset=['arrivaldate'], keep=False)
-        is_discharge = group.duplicated(subset=['departuredate'], keep=False)
+        if len(group) < 2:
+            # If only one journey, it gets its own unique group
+            df.loc[group.index, 'journey_group'] = f"{imo}_1"
+            continue
 
-        # Initial assignment based on simple load/discharge
-        df.loc[group[is_load].index, 'partial_journey'] = 'load'
-        df.loc[group[is_discharge].index, 'partial_journey'] = 'discharge'
+        # Create a graph where each journey is a node
+        G = nx.Graph()
+        indices = group.index.tolist()
+        G.add_nodes_from(indices)
 
-        # Journeys that are both a load and discharge candidate are 'both'
-        is_both = is_load & is_discharge
-        df.loc[group[is_both].index, 'partial_journey'] = 'both'
-
-        # Complex 'both' case: Overlapping journeys
-        # We check for journeys that are part of a load or discharge and see
-        # if they overlap with another journey of a different partial type.
-        indices = group.index
+        # Add an edge between journeys if their date ranges overlap
         for i in range(len(indices)):
             for j in range(i + 1, len(indices)):
                 idx1 = indices[i]
                 idx2 = indices[j]
 
-                # Check for date overlap
-                overlap = (df.loc[idx1, 'departuredate'] <= df.loc[idx2, 'arrivaldate'] and
-                           df.loc[idx1, 'arrivaldate'] >= df.loc[idx2, 'departuredate'])
+                # Condition for two date ranges to overlap
+                # (StartA <= EndB) and (EndA >= StartB)
+                is_overlapping = (df.loc[idx1, 'departuredate'] <= df.loc[idx2, 'arrivaldate'] and
+                                  df.loc[idx1, 'arrivaldate'] >= df.loc[idx2, 'departuredate'])
 
-                if overlap:
-                    type1 = df.loc[idx1, 'partial_journey']
-                    type2 = df.loc[idx2, 'partial_journey']
+                if is_overlapping:
+                    G.add_edge(idx1, idx2)
 
-                    # If overlapping journeys have different partial types (and not 'no'),
-                    # mark both as 'both'.
-                    if type1 != 'no' and type2 != 'no' and type1 != type2:
-                        df.loc[idx1, 'partial_journey'] = 'both'
-                        df.loc[idx2, 'partial_journey'] = 'both'
+        # Find all connected groups of journeys (the connected components)
+        journey_clusters = nx.connected_components(G)
 
-
-    # Assign 'yes' and 'dup' to the 'partial' column
-    partial_journeys = df[df['partial_journey'] != 'no'].copy()
-    if not partial_journeys.empty:
-        # Identify the first occurrence of each partial journey for each IMO
-        partial_journeys['is_first'] = ~partial_journeys.duplicated(subset=['imo', 'partial_journey'])
-        
-        # Assign 'yes' to the first and 'dup' to the rest
-        df.loc[partial_journeys.index, 'partial'] = np.where(partial_journeys['is_first'], 'yes', 'dup')
-
+        # Assign a unique group ID to each cluster
+        for i, cluster in enumerate(journey_clusters, 1):
+            group_id = f"{imo}_{i}"
+            # `cluster` is a set of DataFrame indices for this group
+            df.loc[list(cluster), 'journey_group'] = group_id
 
     return df
