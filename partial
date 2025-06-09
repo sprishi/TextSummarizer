@@ -1,0 +1,55 @@
+def analyze_vessel_journeys(df_input):
+    """
+    Analyzes vessel journey data to identify and flag partial journeys.
+
+    Args:
+        df_input (pd.DataFrame): DataFrame with vessel flow data, including
+                                 'imo', 'departuredate', and 'arrivaldate'.
+
+    Returns:
+        pd.DataFrame: A new DataFrame with 'partial_journey' and 'partial' columns.
+    """
+    # Make a copy to avoid modifying the original DataFrame
+    df = df_input.copy()
+
+    # Ensure date columns are in datetime format
+    df['departuredate'] = pd.to_datetime(df['departuredate'])
+    df['arrivaldate'] = pd.to_datetime(df['arrivaldate'])
+
+    # Sort values to ensure consistent processing
+    df = df.sort_values(by=['imo', 'departuredate', 'arrivaldate']).reset_index(drop=True)
+
+    # Get statistics for each journey
+    journey_stats = df.groupby('imo').agg(
+        num_departures=('departuredate', 'nunique'),
+        num_arrivals=('arrivaldate', 'nunique'),
+        journey_legs=('imo', 'size')
+    )
+
+    # Determine the type of journey for each IMO
+    def get_journey_type(row):
+        if row['journey_legs'] == 1:
+            return 'no'
+        if row['num_departures'] > 1 and row['num_arrivals'] > 1:
+            return 'both'
+        if row['num_departures'] == 1 and row['num_arrivals'] > 1:
+            return 'discharge'
+        if row['num_departures'] > 1 and row['num_arrivals'] == 1:
+            return 'load'
+        return 'no'
+
+    journey_stats['partial_journey'] = journey_stats.apply(get_journey_type, axis=1)
+
+    # Merge the journey type back into the main dataframe
+    df = pd.merge(df, journey_stats[['partial_journey']], on='imo', how='left')
+
+    # Initialize the 'partial' column
+    df['partial'] = 'no'
+    is_partial_mask = df['partial_journey'] != 'no'
+    df.loc[is_partial_mask, 'partial'] = 'yes'
+
+    # Flag subsequent rows of a partial journey as 'dup'
+    dup_mask = df.duplicated(subset=['imo', 'partial_journey']) & is_partial_mask
+    df.loc[dup_mask, 'partial'] = 'dup'
+
+    return df
