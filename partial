@@ -1,64 +1,79 @@
-import networkx as nx
-
-def group_overlapping_journeys(mo_whole: pd.DataFrame) -> pd.DataFrame:
+def analyze_vessel_journeys(mo_whole: pd.DataFrame) -> pd.DataFrame:
     """
-    Groups overlapping journeys for each vessel (IMO).
-
-    This function identifies all journeys that overlap in time for each IMO
-    and assigns a unique 'journey_group' identifier to each cluster of
-    overlapping journeys.
+    Analyzes vessel journeys to group them by overlap and classify them as
+    partial load, discharge, both, or no. Also adds a helper column to
+    identify unique partial journeys.
 
     Args:
         mo_whole: DataFrame with vessel flow data, including 'imo',
                   'departuredate', and 'arrivaldate'.
 
     Returns:
-        A new DataFrame with an added 'journey_group' column.
+        A new DataFrame with 'journey_group', 'partial_journey', and 'partial' columns.
     """
-    # Ensure date columns are in datetime format and create a copy
+    # --- Step 1: Group Overlapping Journeys ---
     df = mo_whole.copy()
     df['departuredate'] = pd.to_datetime(df['departuredate'])
     df['arrivaldate'] = pd.to_datetime(df['arrivaldate'])
-
-    # Sort for clarity, although not strictly necessary for this logic
     df = df.sort_values(['imo', 'departuredate']).reset_index(drop=True)
-
-    # Initialize the new column
     df['journey_group'] = None
 
-    # Process each vessel's journeys
     for imo, group in df.groupby('imo'):
         if len(group) < 2:
-            # If only one journey, it gets its own unique group
             df.loc[group.index, 'journey_group'] = f"{imo}_1"
             continue
 
-        # Create a graph where each journey is a node
         G = nx.Graph()
         indices = group.index.tolist()
         G.add_nodes_from(indices)
 
-        # Add an edge between journeys if their date ranges overlap
         for i in range(len(indices)):
             for j in range(i + 1, len(indices)):
-                idx1 = indices[i]
-                idx2 = indices[j]
-
-                # Condition for two date ranges to overlap
-                # (StartA <= EndB) and (EndA >= StartB)
+                idx1, idx2 = indices[i], indices[j]
                 is_overlapping = (df.loc[idx1, 'departuredate'] <= df.loc[idx2, 'arrivaldate'] and
                                   df.loc[idx1, 'arrivaldate'] >= df.loc[idx2, 'departuredate'])
-
                 if is_overlapping:
                     G.add_edge(idx1, idx2)
 
-        # Find all connected groups of journeys (the connected components)
-        journey_clusters = nx.connected_components(G)
+        for i, cluster in enumerate(nx.connected_components(G), 1):
+            df.loc[list(cluster), 'journey_group'] = f"{imo}_{i}"
 
-        # Assign a unique group ID to each cluster
-        for i, cluster in enumerate(journey_clusters, 1):
-            group_id = f"{imo}_{i}"
-            # `cluster` is a set of DataFrame indices for this group
-            df.loc[list(cluster), 'journey_group'] = group_id
+    # --- Step 2: Classify Journey Groups and Add Partial Column ---
+    df['partial_journey'] = 'no' # Default value
+
+    # Group by the newly created journey_group to classify each
+    for name, group in df.groupby('journey_group'):
+        # A group with only one row is not a partial journey
+        if len(group) <= 1:
+            df.loc[group.index, 'partial_journey'] = 'no'
+            continue
+
+        # Count unique departure and arrival dates within the group
+        unique_departures = group['departuredate'].nunique()
+        unique_arrivals = group['arrivaldate'].nunique()
+
+        # Classify the journey type based on the counts
+        if unique_departures > 1 and unique_arrivals == 1:
+            df.loc[group.index, 'partial_journey'] = 'load'
+        elif unique_departures == 1 and unique_arrivals > 1:
+            df.loc[group.index, 'partial_journey'] = 'discharge'
+        elif unique_departures > 1 and unique_arrivals > 1:
+            df.loc[group.index, 'partial_journey'] = 'both'
+        else: # unique_departures == 1 and unique_arrivals == 1
+            df.loc[group.index, 'partial_journey'] = 'no'
+
+
+    # --- Step 3: Assign 'yes', 'dup', or 'no' to the 'partial' column ---
+    # Default to 'no'
+    df['partial'] = 'no'
+
+    # Get indices of all rows that are part of a partial journey
+    partial_indices = df[df['partial_journey'] != 'no'].index
+
+    # Identify the first row in each journey_group
+    is_first_in_group = ~df.loc[partial_indices].duplicated(subset=['journey_group'], keep='first')
+
+    # Assign 'yes' to the first row and 'dup' to subsequent rows
+    df.loc[partial_indices, 'partial'] = np.where(is_first_in_group, 'yes', 'dup')
 
     return df
