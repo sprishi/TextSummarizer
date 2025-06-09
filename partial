@@ -1,53 +1,72 @@
-def classify_partial_journeys(df):
-    df = df.copy()
+def analyze_vessel_journeys(mo_whole: pd.DataFrame) -> pd.DataFrame:
+    """
+    Analyzes vessel journey data to identify partial loads, discharges, and both.
+
+    Args:
+        mo_whole: DataFrame with vessel flow data, including columns like
+                  'imo', 'departuredate', and 'arrivaldate'.
+
+    Returns:
+        A new DataFrame with 'partial_journey' and 'partial' columns.
+    """
+    # Ensure date columns are in datetime format
+    df = mo_whole.copy()
     df['departuredate'] = pd.to_datetime(df['departuredate'])
     df['arrivaldate'] = pd.to_datetime(df['arrivaldate'])
 
+    # Sort by IMO and dates
+    df = df.sort_values(['imo', 'departuredate', 'arrivaldate']).reset_index(drop=True)
+
+    # Initialize new columns
     df['partial_journey'] = 'no'
     df['partial'] = 'no'
 
-    results = []
-
+    # Group by IMO to process each vessel's journeys
     for imo, group in df.groupby('imo'):
-        g = group.sort_values(by=['departuredate', 'arrivaldate']).reset_index()
-        g['tag'] = 'no'
+        # Identify partial loads and discharges within the group
+        is_load = group.duplicated(subset=['arrivaldate'], keep=False)
+        is_discharge = group.duplicated(subset=['departuredate'], keep=False)
 
-        # Check for overlapping discharge (same dep, different arr)
-        for dep in g['departuredate'].unique():
-            same_dep = g[g['departuredate'] == dep]
-            if len(same_dep['arrivaldate'].unique()) > 1:
-                g.loc[same_dep.index, 'tag'] = 'discharge'
+        # Initial assignment based on simple load/discharge
+        df.loc[group[is_load].index, 'partial_journey'] = 'load'
+        df.loc[group[is_discharge].index, 'partial_journey'] = 'discharge'
 
-        # Check for overlapping load (same arr, different dep)
-        for arr in g['arrivaldate'].unique():
-            same_arr = g[g['arrivaldate'] == arr]
-            if len(same_arr['departuredate'].unique()) > 1:
-                g.loc[same_arr.index, 'tag'] = 'load'
+        # Journeys that are both a load and discharge candidate are 'both'
+        is_both = is_load & is_discharge
+        df.loc[group[is_both].index, 'partial_journey'] = 'both'
 
-        # Now find overlaps of both load and discharge
-        overlaps = []
-        for i in range(len(g)):
-            row = g.loc[i]
-            others = g[(g.index != i)]
-            cond = (
-                (others['departuredate'] <= row['arrivaldate']) &
-                (others['arrivaldate'] >= row['departuredate'])
-            )
-            if (others[cond]['tag'].nunique() > 1):
-                overlaps.append(i)
+        # Complex 'both' case: Overlapping journeys
+        # We check for journeys that are part of a load or discharge and see
+        # if they overlap with another journey of a different partial type.
+        indices = group.index
+        for i in range(len(indices)):
+            for j in range(i + 1, len(indices)):
+                idx1 = indices[i]
+                idx2 = indices[j]
 
-        g.loc[overlaps, 'tag'] = 'both'
-        g['partial_journey'] = g['tag']
-        g.drop(columns='tag', inplace=True)
+                # Check for date overlap
+                overlap = (df.loc[idx1, 'departuredate'] <= df.loc[idx2, 'arrivaldate'] and
+                           df.loc[idx1, 'arrivaldate'] >= df.loc[idx2, 'departuredate'])
 
-        # Assign 'partial' flag
-        for val in ['load', 'discharge', 'both']:
-            rows = g[g['partial_journey'] == val]
-            if not rows.empty:
-                g.loc[rows.index[0], 'partial'] = 'yes'
-                g.loc[rows.index[1:], 'partial'] = 'dup'
+                if overlap:
+                    type1 = df.loc[idx1, 'partial_journey']
+                    type2 = df.loc[idx2, 'partial_journey']
 
-        results.append(g.set_index('index'))
+                    # If overlapping journeys have different partial types (and not 'no'),
+                    # mark both as 'both'.
+                    if type1 != 'no' and type2 != 'no' and type1 != type2:
+                        df.loc[idx1, 'partial_journey'] = 'both'
+                        df.loc[idx2, 'partial_journey'] = 'both'
 
-    final_df = pd.concat(results).sort_index()
-    return final_df
+
+    # Assign 'yes' and 'dup' to the 'partial' column
+    partial_journeys = df[df['partial_journey'] != 'no'].copy()
+    if not partial_journeys.empty:
+        # Identify the first occurrence of each partial journey for each IMO
+        partial_journeys['is_first'] = ~partial_journeys.duplicated(subset=['imo', 'partial_journey'])
+        
+        # Assign 'yes' to the first and 'dup' to the rest
+        df.loc[partial_journeys.index, 'partial'] = np.where(partial_journeys['is_first'], 'yes', 'dup')
+
+
+    return df
