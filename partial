@@ -1,3 +1,98 @@
+
+Of course. The provided code can be made significantly faster by replacing slow, iterative operations with vectorized computations using pandas and NumPy. The main bottlenecks in your original code are the nested loops for building a graph and the groupby().apply() pattern for classification.
+
+The optimized version below avoids these issues, leading to a substantial performance improvement, especially on large datasets.
+
+Python
+
+import pandas as pd
+import numpy as np
+
+def analyze_vessel_journeys_fast(mo_whole: pd.DataFrame) -> pd.DataFrame:
+    """
+    Analyzes vessel journeys to group them by overlap and classify them.
+    This is a vectorized and optimized version.
+
+    Args:
+        mo_whole: DataFrame with vessel flow data, including 'imo',
+                  'departuredate', and 'arrivaldate'.
+
+    Returns:
+        A new DataFrame with 'journey_group', 'partial_journey', and 'partial' columns.
+    """
+    df = mo_whole.copy()
+
+    # --- Pre-processing ---
+    # Ensure dates are in datetime format and sort the data
+    df['departuredate'] = pd.to_datetime(df['departuredate'])
+    df['arrivaldate'] = pd.to_datetime(df['arrivaldate'])
+    df = df.sort_values(['imo', 'departuredate']).reset_index(drop=True)
+
+    # --- Step 1: Group Overlapping Journeys (Vectorized) ---
+    # This vectorized approach replaces the slow graph-based method.
+    # It works by identifying the start of a new group whenever a journey's
+    # departure is after the maximum arrival time of the preceding journeys in its group.
+
+    # Calculate the cumulative max of arrival dates within each IMO group
+    df['max_arrival_so_far'] = df.groupby('imo')['arrivaldate'].cummax()
+
+    # Get the max arrival time of the previous entry in the group
+    df['prev_max_arrival'] = df.groupby('imo')['max_arrival_so_far'].shift(1)
+
+    # A new group starts if the departure is after the previous max arrival.
+    # The first entry for each IMO will have NaT, which correctly starts a new group.
+    is_new_group = df['departuredate'] > df['prev_max_arrival']
+
+    # Use cumsum to create a unique ID for each sequential group within an IMO
+    group_in_imo_id = is_new_group.groupby(df['imo']).cumsum()
+
+    # Create the final globally unique journey group ID
+    df['journey_group'] = df['imo'].astype(str) + '_' + group_in_imo_id.astype(str)
+
+    # --- Step 2: Classify Journey Groups (Vectorized) ---
+    # This replaces the slow iteration over groups with a single groupby-agg-merge operation.
+    
+    # Aggregate statistics for each journey group
+    journey_stats = df.groupby('journey_group').agg(
+        n_departures=('departuredate', 'nunique'),
+        n_arrivals=('arrivaldate', 'nunique')
+    )
+
+    # Define conditions for each partial journey type
+    cond_load = (journey_stats['n_departures'] > 1) & (journey_stats['n_arrivals'] == 1)
+    cond_discharge = (journey_stats['n_departures'] == 1) & (journey_stats['n_arrivals'] > 1)
+    cond_both = (journey_stats['n_departures'] > 1) & (journey_stats['n_arrivals'] > 1)
+    
+    # Use np.select for fast conditional assignment
+    choices = ['load', 'discharge', 'both']
+    conditions = [cond_load, cond_discharge, cond_both]
+    journey_stats['partial_journey'] = np.select(conditions, choices, default='no')
+
+    # Map the classification results back to the main DataFrame
+    df = df.merge(journey_stats[['partial_journey']], left_on='journey_group', right_index=True, how='left')
+
+    # --- Step 3: Assign 'partial' column (Already efficient) ---
+    # This logic was already efficient and is kept.
+    df['partial'] = 'no'
+
+    # Identify all rows that are part of a partial journey
+    partial_indices = df[df['partial_journey'] != 'no'].index
+
+    # Find the first entry in each partial journey group
+    is_first_in_group = ~df.loc[partial_indices].duplicated(subset=['journey_group'], keep='first')
+
+    # Assign 'yes' to the first entry and 'dup' to the rest
+    df.loc[partial_indices, 'partial'] = np.where(is_first_in_group, 'yes', 'dup')
+    
+    # --- Cleanup ---
+    # Remove temporary helper columns
+    df = df.drop(columns=['max_arrival_so_far', 'prev_max_arrival'])
+
+    return df
+
+
+#--------------------------------------------------------------------
+
 def analyze_vessel_journeys(mo_whole: pd.DataFrame) -> pd.DataFrame:
     """
     Analyzes vessel journeys to group them by overlap and classify them as
