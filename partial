@@ -1,55 +1,46 @@
-def analyze_vessel_journeys(df_input):
-    """
-    Analyzes vessel journey data to identify and flag partial journeys.
+def classify_partial_journeys(mo_whole):
+    df = mo_whole.copy()
 
-    Args:
-        df_input (pd.DataFrame): DataFrame with vessel flow data, including
-                                 'imo', 'departuredate', and 'arrivaldate'.
+    # Step 1: sort for consistency
+    df = df.sort_values(by=['imo', 'departuredate', 'arrivaldate'])
 
-    Returns:
-        pd.DataFrame: A new DataFrame with 'partial_journey' and 'partial' columns.
-    """
-    # Make a copy to avoid modifying the original DataFrame
-    df = df_input.copy()
+    # Group by IMO
+    results = []
+    for imo, group in df.groupby('imo'):
+        temp = group.copy()
 
-    # Ensure date columns are in datetime format
-    df['departuredate'] = pd.to_datetime(df['departuredate'])
-    df['arrivaldate'] = pd.to_datetime(df['arrivaldate'])
+        # Find duplicates
+        dep_counts = temp['departuredate'].value_counts()
+        arr_counts = temp['arrivaldate'].value_counts()
 
-    # Sort values to ensure consistent processing
-    df = df.sort_values(by=['imo', 'departuredate', 'arrivaldate']).reset_index(drop=True)
+        dep_map = temp['departuredate'].map(dep_counts)
+        arr_map = temp['arrivaldate'].map(arr_counts)
 
-    # Get statistics for each journey
-    journey_stats = df.groupby('imo').agg(
-        num_departures=('departuredate', 'nunique'),
-        num_arrivals=('arrivaldate', 'nunique'),
-        journey_legs=('imo', 'size')
-    )
+        temp['partial_journey'] = 'no'
 
-    # Determine the type of journey for each IMO
-    def get_journey_type(row):
-        if row['journey_legs'] == 1:
-            return 'no'
-        if row['num_departures'] > 1 and row['num_arrivals'] > 1:
-            return 'both'
-        if row['num_departures'] == 1 and row['num_arrivals'] > 1:
-            return 'discharge'
-        if row['num_departures'] > 1 and row['num_arrivals'] == 1:
-            return 'load'
-        return 'no'
+        # Tag load & discharge
+        temp.loc[(dep_map > 1) & (arr_map == 1), 'partial_journey'] = 'load'
+        temp.loc[(arr_map > 1) & (dep_map == 1), 'partial_journey'] = 'discharge'
 
-    journey_stats['partial_journey'] = journey_stats.apply(get_journey_type, axis=1)
+        # Tag both where overlaps happen
+        load_discharge = temp[temp['partial_journey'].isin(['load', 'discharge'])]
+        for i, row in load_discharge.iterrows():
+            overlaps = load_discharge[
+                (load_discharge['departuredate'] <= row['arrivaldate']) &
+                (load_discharge['arrivaldate'] >= row['departuredate'])
+            ]
+            if len(overlaps) > 1:
+                temp.loc[overlaps.index, 'partial_journey'] = 'both'
 
-    # Merge the journey type back into the main dataframe
-    df = pd.merge(df, journey_stats[['partial_journey']], on='imo', how='left')
+        # Create 'partial' column
+        temp['partial'] = 'no'
+        for val in ['load', 'discharge', 'both']:
+            part_rows = temp[temp['partial_journey'] == val]
+            if not part_rows.empty:
+                temp.loc[part_rows.index[0], 'partial'] = 'yes'
+                temp.loc[part_rows.index[1:], 'partial'] = 'dup'
 
-    # Initialize the 'partial' column
-    df['partial'] = 'no'
-    is_partial_mask = df['partial_journey'] != 'no'
-    df.loc[is_partial_mask, 'partial'] = 'yes'
+        results.append(temp)
 
-    # Flag subsequent rows of a partial journey as 'dup'
-    dup_mask = df.duplicated(subset=['imo', 'partial_journey']) & is_partial_mask
-    df.loc[dup_mask, 'partial'] = 'dup'
-
-    return df
+    final_df = pd.concat(results).sort_index()
+    return final_df
